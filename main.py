@@ -190,6 +190,28 @@ Cards to grade:
     return results
 
 
+def batched_cards(deck_id, batch_size=20):
+    """Iterator that yields batches of cards from a deck.
+
+    Similar to ML data loaders with shuffling turned off.
+
+    Args:
+        deck_id: Deck ID to fetch cards from
+        batch_size: Number of cards per batch (default: 20)
+
+    Yields:
+        Tuples of (batch, batch_num, total_batches) where batch is a list of cards
+    """
+    cards = get_cards(deck_id)
+    total_cards = len(cards)
+    total_batches = (total_cards + batch_size - 1) // batch_size
+
+    for i in range(0, total_cards, batch_size):
+        batch = cards[i:i+batch_size]
+        batch_num = (i // batch_size) + 1
+        yield batch, batch_num, total_batches
+
+
 def grade_all_cards(deck_id, batch_size=20):
     """Grade all cards in a deck, batching requests to minimize API calls.
 
@@ -201,17 +223,9 @@ def grade_all_cards(deck_id, batch_size=20):
         List of tuples: (card, score, justification) for cards scoring < 10
     """
     print("\nFetching cards to grade...")
-    cards = get_cards(deck_id)
-    total_cards = len(cards)
-
-    print(f"Grading {total_cards} cards in batches of {batch_size}...")
-
     all_results = []
-    for i in range(0, total_cards, batch_size):
-        batch = cards[i:i+batch_size]
-        batch_num = (i // batch_size) + 1
-        total_batches = (total_cards + batch_size - 1) // batch_size
 
+    for batch, batch_num, total_batches in batched_cards(deck_id, batch_size):
         print(f"  Processing batch {batch_num}/{total_batches} ({len(batch)} cards)...", flush=True)
 
         try:
