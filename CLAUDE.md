@@ -78,10 +78,13 @@ OPENROUTER_API_KEY=your_openrouter_api_key  # Only for grading feature
 All code is in `main.py` - a single Python module (388 lines) with no subdirectories or packages.
 Tests are in `test_main.py` using pytest framework.
 
+### Error Handling Philosophy
+**Fail fast.** The codebase intentionally avoids defensive error handling that swallows exceptions or provides defaults. Let exceptions propagate to the top rather than catching and continuing. This makes debugging easier and prevents silent failures.
+
 ### Core API Functions
 - **`parse_card(content)`**: Utility to parse card content into (question, answer) tuple
 - **`get_decks()`**: Fetch all decks from Mochi API
-- **`get_cards(deck_id, limit=100)`**: Paginated card fetching with automatic handling of Mochi API's pagination bug (500 errors)
+- **`get_cards(deck_id, limit=100)`**: Paginated card fetching
 - **`create_card(deck_id, content, **kwargs)`**: Create new cards
 - **`update_card(card_id, **kwargs)`**: Update existing cards
 - **`delete_card(card_id)`**: Delete cards
@@ -102,13 +105,9 @@ Answer text
 - Uses OpenRouter API with Gemini 2.5 Flash model
 - Batches multiple cards per API call (default: 20) to minimize costs
 - Returns JSON-formatted grades with scores (0-10) and justifications
-- Handles various JSON response formats from the LLM
 
 ### Default Deck Behavior
 By default, the CLI looks for a deck containing "AI/ML" in the name. Use `--deck-name` or `--deck-id` flags to specify different decks.
-
-### API Pagination Bug
-The Mochi API has a known bug where it returns 500 errors after fetching many cards during pagination. The `get_cards()` function handles this gracefully by returning all cards fetched up to that point.
 
 ### Testing Architecture
 - **Unit Tests**: Test utilities (parse_card, find_deck) and CLI parsing with mocks

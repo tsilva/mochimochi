@@ -1,3 +1,4 @@
 - measure card answer accuracy
 - detect duplicates (exact match and similar)
 - detect missing cards, sort cards by semantic similarity and search for cards that could be added to fill in the gaps
+- upload feature should also work for updates if card is is specified
