@@ -313,6 +313,75 @@ def dump_cards_to_markdown(deck_id, output_file="mochi_cards.md"):
     return len(cards)
 
 
+def upload_cards_from_markdown(deck_id, input_file):
+    """Upload cards from a markdown file.
+
+    Expected markdown format:
+    **Question:**
+
+    Question text
+
+    **Answer:**
+
+    Answer text
+
+    ---
+
+    Args:
+        deck_id: Deck ID to add cards to
+        input_file: Path to markdown file
+
+    Returns:
+        List of created card IDs
+    """
+    print(f"Reading cards from {input_file}...")
+
+    with open(input_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # Split by --- separator
+    sections = content.split('---')
+    created_ids = []
+
+    for i, section in enumerate(sections, 1):
+        section = section.strip()
+        if not section:
+            continue
+
+        # Parse question and answer
+        if '**Question:**' not in section or '**Answer:**' not in section:
+            print(f"  Skipping section {i}: missing Question/Answer markers")
+            continue
+
+        # Extract question
+        q_start = section.find('**Question:**') + len('**Question:**')
+        q_end = section.find('**Answer:**')
+        question = section[q_start:q_end].strip()
+
+        # Extract answer
+        a_start = section.find('**Answer:**') + len('**Answer:**')
+        answer = section[a_start:].strip()
+
+        if not question or not answer:
+            print(f"  Skipping section {i}: empty question or answer")
+            continue
+
+        # Create card content in Mochi format
+        card_content = f"{question}\n---\n{answer}"
+
+        try:
+            print(f"  Creating card {i}...", end=' ', flush=True)
+            created_card = create_card(deck_id, card_content)
+            created_ids.append(created_card['id'])
+            print(f"✓ (ID: {created_card['id']})")
+        except Exception as e:
+            print(f"✗ Error: {e}")
+            continue
+
+    print(f"\n✓ Successfully created {len(created_ids)} cards")
+    return created_ids
+
+
 def display_grading_results(imperfect_cards, all_results):
     """Display grading results."""
     sep = "=" * 60
@@ -364,6 +433,10 @@ def parse_args():
     dump_parser.add_argument("--output", "-o", default="mochi_cards.md",
                             help="Output file (default: mochi_cards.md)")
 
+    upload_parser = subparsers.add_parser("upload", help="Upload cards from markdown")
+    upload_parser.add_argument("--input", "-i", required=True,
+                              help="Input markdown file")
+
     subparsers.add_parser("decks", help="List all available decks")
     return parser.parse_args()
 
@@ -396,6 +469,8 @@ def main():
         display_grading_results(imperfect_cards, all_results)
     elif args.command == "dump":
         dump_cards_to_markdown(deck["id"], args.output)
+    elif args.command == "upload":
+        upload_cards_from_markdown(deck["id"], args.input)
 
 
 if __name__ == "__main__":

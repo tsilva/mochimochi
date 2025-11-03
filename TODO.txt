@@ -1,1 +1,3 @@
-- iterator that allows lazily iterating through all cards without having to be aware of their source, allows specifying how many cards to return per call
+- measure card answer accuracy
+- detect duplicates (exact match and similar)
+- detect missing cards, sort cards by semantic similarity and search for cards that could be added to fill in the gaps
