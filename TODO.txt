@@ -1,5 +1,1 @@
-- measure card answer accuracy
-- detect duplicates (exact match and similar)
-- detect missing cards, sort cards by semantic similarity and search for cards that could be added to fill in the gaps
-- upload feature should also work for updates if card is is specified
-- make most tasks work around the concept of a scratchpad; basically all tasks dump output to a file that can then still be iterated by human, and then human can upload that file using the upload feature
+- Change codebase to work around the concept of having a synced copy of the deck at all times.

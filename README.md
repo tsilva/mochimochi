@@ -10,6 +10,7 @@ A Python tool for managing and grading Mochi flashcards via the Mochi API. This 
 - 🗑️ **Delete Cards**: Remove cards via API
 - 🤖 **AI Grading**: Automatically grade flashcards using OpenRouter's Gemini 2.5 Flash LLM
 - 📝 **Export to Markdown**: Export all cards to a markdown file for backup or review
+- 📤 **Upload from Markdown**: Import cards from markdown files (supports both create and update)
 - 🧪 **Test Suite**: Comprehensive pytest-based test suite with unit and integration tests
 
 ## Installation
@@ -42,31 +43,38 @@ After installation, the `mochi-cards` command will be available in your PATH.
 
 ## Configuration
 
-Create a `.env` file in the project root with your API keys:
+Create a `.env` file in the project root with your API keys and deck ID:
 
 ```env
 MOCHI_API_KEY=your_mochi_api_key_here
+DECK_ID=your_deck_id_here
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
-**Note**: The `OPENROUTER_API_KEY` is only required if you want to use the AI grading feature.
+**Required:**
+- `MOCHI_API_KEY`: Your Mochi API key
+- `DECK_ID`: The ID of the deck you want to work with
 
-### Getting API Keys
+**Optional:**
+- `OPENROUTER_API_KEY`: Only required if you want to use the AI grading feature
+
+### Getting Configuration Values
 
 - **Mochi API Key**: Obtain from your Mochi account settings
+- **Deck ID**: You can find your deck ID in the Mochi web app URL when viewing a deck (e.g., `https://app.mochi.cards/decks/abc123` - the ID is `abc123`)
 - **OpenRouter API Key**: Sign up at [OpenRouter](https://openrouter.ai/) to get an API key
 
 ## Usage
 
 ### Command Line Interface
 
-The script can be run directly or via the installed `mochi-cards` command:
+The script can be run directly or via the installed `mochi-cards` command. All commands operate on the deck specified in your `.env` file.
 
-#### List all cards in AI/ML deck
+#### List all cards
 ```bash
-python main.py
+python main.py list
 # or
-mochi-cards
+mochi-cards list
 ```
 
 #### Grade all cards using LLM (shows cards with score < 10)
@@ -78,12 +86,21 @@ mochi-cards grade
 
 #### Export cards to markdown
 ```bash
-python main.py dump [output_file.md]
+python main.py dump --output cards.md
 # or
-mochi-cards dump [output_file.md]
+mochi-cards dump --output cards.md
 ```
 
 If no output file is specified, defaults to `mochi_cards.md`.
+
+#### Upload cards from markdown
+```bash
+python main.py upload --input cards.md
+# or
+mochi-cards upload --input cards.md
+```
+
+Cards with valid `card_id` in frontmatter will be updated; cards with `card_id: null` will be created as new cards.
 
 ### Python API
 
@@ -97,7 +114,8 @@ from main import (
     update_card,
     delete_card,
     grade_all_cards,
-    dump_cards_to_markdown
+    dump_cards_to_markdown,
+    upload_cards_from_markdown
 )
 
 # Get all decks
@@ -123,6 +141,9 @@ imperfect_cards, all_results = grade_all_cards(deck_id)
 
 # Export cards to markdown
 dump_cards_to_markdown(deck_id, "my_cards.md")
+
+# Upload cards from markdown
+created_ids, updated_ids = upload_cards_from_markdown(deck_id, "my_cards.md")
 ```
 
 ## API Functions
@@ -194,7 +215,7 @@ Grades all cards in a deck using AI, batching requests to minimize API calls.
 - 0-3: Incorrect or severely incomplete
 
 ### `dump_cards_to_markdown(deck_id, output_file="mochi_cards.md")`
-Exports all cards from a deck to a markdown file.
+Exports all cards from a deck to a markdown file in compact format.
 
 **Parameters:**
 - `deck_id` (str): Deck ID to export cards from
@@ -202,9 +223,34 @@ Exports all cards from a deck to a markdown file.
 
 **Returns:** Number of cards exported
 
+**Format:** Cards are exported with `card_id` in frontmatter, all sections separated by `---`
+
+### `upload_cards_from_markdown(deck_id, input_file)`
+Imports cards from a markdown file. Cards with `card_id` frontmatter will be updated; cards without will be created.
+
+**Parameters:**
+- `deck_id` (str): Deck ID to add cards to
+- `input_file` (str): Path to markdown file
+
+**Returns:** Tuple of `(created_ids, updated_ids)`
+- `created_ids`: List of IDs for newly created cards
+- `updated_ids`: List of IDs for updated cards
+
+**Example workflow:**
+```python
+# Export cards to markdown
+dump_cards_to_markdown(deck_id, "cards.md")
+
+# Edit the file (fix typos, improve answers, add new cards)
+# Then re-import - existing cards are updated, new ones are created
+created_ids, updated_ids = upload_cards_from_markdown(deck_id, "cards.md")
+print(f"Created {len(created_ids)} cards, updated {len(updated_ids)} cards")
+```
+
 ## Card Format
 
-Cards should be formatted with markdown content separated by `---`:
+### Internal Format (API)
+Cards in the Mochi API use markdown content separated by `---`:
 
 ```
 Question text here
@@ -217,6 +263,48 @@ Answer text here
 What is the time complexity of binary search?
 ---
 O(log n) - logarithmic time complexity
+```
+
+### Markdown Export/Import Format
+Exported markdown files use a compact format with `---` separators:
+
+```markdown
+---
+card_id: abc123xyz
+---
+What is the time complexity of binary search?
+---
+O(log n) - logarithmic time complexity
+---
+card_id: def456ghi
+---
+What is a hash table?
+---
+A data structure that maps keys to values using a hash function.
+```
+
+**Format:**
+- `---` separates all sections
+- Every card has frontmatter with `card_id:`
+- Exported cards have their actual card IDs
+- To add new cards manually, use `card_id: null`
+- Cards with valid IDs will be **updated** when uploaded
+- Cards with `card_id: null` will be **created** as new cards
+
+**Example with mixed create/update:**
+```markdown
+---
+card_id: existing_id
+---
+Updated question?
+---
+Updated answer
+---
+card_id: null
+---
+New question without ID?
+---
+New answer (will be created)
 ```
 
 ## Development & Testing
@@ -248,14 +336,14 @@ See [TESTING.md](TESTING.md) for detailed testing documentation.
 
 Unit tests cover:
 - Card parsing (question/answer separation)
-- Deck finding (by ID, name, partial match)
+- Deck finding utilities (legacy support)
 - LLM grading response parsing
-- Markdown export
+- Markdown export/import
 - CLI argument parsing
 
 ## Notes
 
-- The main script automatically looks for a deck containing "AI/ML" in the name. If you need to work with a different deck, modify the `main()` function or use the API functions directly.
+- All operations work on the single deck specified by `DECK_ID` in your `.env` file.
 - The grading feature uses OpenRouter's Gemini 2.5 Flash model for evaluation.
 - Card fetching handles pagination automatically, but there's a known API pagination bug that may cause premature termination with a 500 error after retrieving many cards. The script handles this gracefully.
 

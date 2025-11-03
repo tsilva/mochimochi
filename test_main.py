@@ -12,7 +12,8 @@ def mock_env():
     """Mock environment variables."""
     with patch.dict(os.environ, {
         'MOCHI_API_KEY': 'test_api_key',
-        'OPENROUTER_API_KEY': 'test_openrouter_key'
+        'OPENROUTER_API_KEY': 'test_openrouter_key',
+        'DECK_ID': 'test_deck_id'
     }):
         yield
 
@@ -212,9 +213,50 @@ class TestMarkdownExport:
         content = output_file.read_text()
         assert "# Mochi Cards Export" in content
         assert "Total cards: 2" in content
+        assert "card_id: card1" in content
+        assert "card_id: card2" in content
         assert "What is Python?" in content
         assert "A programming language" in content
         assert "What is ML?" in content
+
+    def test_upload_cards_from_markdown_compact_format(self, tmp_path):
+        """Test uploading cards with compact format."""
+        input_file = tmp_path / "test_upload.md"
+        input_file.write_text("""# Test Cards
+
+---
+card_id: existing123
+---
+What is Python?
+---
+A programming language
+---
+card_id: null
+---
+What is ML?
+---
+Machine Learning
+""")
+
+        with patch('main.create_card') as mock_create, \
+             patch('main.update_card') as mock_update:
+            mock_create.return_value = {'id': 'new456'}
+
+            created, updated = main.upload_cards_from_markdown('deck1', str(input_file))
+
+        assert len(updated) == 1
+        assert updated[0] == 'existing123'
+        assert len(created) == 1
+        assert created[0] == 'new456'
+
+        # Verify update was called with correct content
+        mock_update.assert_called_once()
+        assert mock_update.call_args[0][0] == 'existing123'
+        assert 'What is Python?' in mock_update.call_args[1]['content']
+
+        # Verify create was called with correct content
+        mock_create.assert_called_once()
+        assert 'What is ML?' in mock_create.call_args[0][1]
 
 
 class TestCLI:
@@ -239,12 +281,6 @@ class TestCLI:
             args = main.parse_args()
             assert args.command == 'dump'
             assert args.output == 'cards.md'
-
-    def test_parse_args_deck_name(self):
-        """Test deck name argument."""
-        with patch('sys.argv', ['main.py', '--deck-name', 'My Deck', 'list']):
-            args = main.parse_args()
-            assert args.deck_name == 'My Deck'
 
 
 if __name__ == '__main__':
