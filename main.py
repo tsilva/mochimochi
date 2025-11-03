@@ -531,11 +531,33 @@ def display_readonly_results(results):
         print("\nNo results to display.")
         return
 
+    # Filter out perfect scores (score == 10) if this is a scoring task
+    filtered_results = []
+    perfect_count = 0
+
+    for card, result in results:
+        if isinstance(result, dict) and "score" in result:
+            if result["score"] < 10:
+                filtered_results.append((card, result))
+            else:
+                perfect_count += 1
+        else:
+            filtered_results.append((card, result))
+
+    total_count = len(results)
+
     print(f"\n{'=' * 60}")
     print("RESULTS")
     print(f"{'=' * 60}\n")
 
-    for card, result in results:
+    if perfect_count > 0:
+        print(f"Total: {total_count} | Perfect (10/10): {perfect_count} | Need review: {len(filtered_results)}\n")
+
+    if not filtered_results:
+        print("🎉 All cards are perfect!")
+        return
+
+    for card, result in filtered_results:
         question, _ = parse_card(card['content'])
         q_short = question[:80] + '...' if len(question) > 80 else question
 
