@@ -1,0 +1,1 @@
+- iterator that allows lazily iterating through all cards without having to be aware of their source, allows specifying how many cards to return per call
