@@ -206,4 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Exported markdown files (mochi card dumps)
+mochi_cards.md
+*_cards.md
+
 .env

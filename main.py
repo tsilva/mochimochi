@@ -22,9 +22,7 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("MOCHI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-if not API_KEY:
-    raise ValueError("MOCHI_API_KEY not found in .env file")
+DECK_ID = os.getenv("DECK_ID")
 
 BASE_URL = "https://app.mochi.cards/api"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -263,9 +261,9 @@ def get_cards(deck_id, limit=100):
     return cards
 
 
-def list_cards(deck_id, deck_name):
-    """List all cards in a deck."""
-    print(f"Found deck: {deck_name}\nFetching cards...")
+def list_cards(deck_id):
+    """List all cards in the deck."""
+    print("Fetching cards...")
     cards = get_cards(deck_id)
     print(f"\nTotal cards: {len(cards)}\n" + "=" * 60)
 
@@ -282,12 +280,13 @@ def dump_cards_to_markdown(deck_id, output_file="mochi_cards.md"):
     print(f"Exporting {len(cards)} cards to {output_file}...")
 
     with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f"# Mochi Cards Export\n\nTotal cards: {len(cards)}\n\n---\n\n")
-        for i, card in enumerate(cards, 1):
+        f.write(f"# Mochi Cards Export\n\nTotal cards: {len(cards)}\n\n")
+        for card in cards:
             question, answer = parse_card(card['content'])
-            f.write(f"## Card {i}\n\n<!-- Card ID: {card['id']} -->\n\n")
-            f.write(f"**Question:**\n\n{question}\n\n")
-            f.write(f"**Answer:**\n\n{answer}\n\n---\n\n")
+            f.write(f"---\ncard_id: {card['id']}\n---\n")
+            f.write(f"{question}\n")
+            f.write(f"---\n")
+            f.write(f"{answer}\n")
 
     print(f"✓ Exported {len(cards)} cards to {output_file}")
     return len(cards)
@@ -296,23 +295,30 @@ def dump_cards_to_markdown(deck_id, output_file="mochi_cards.md"):
 def upload_cards_from_markdown(deck_id, input_file):
     """Upload cards from a markdown file.
 
-    Expected markdown format:
-    **Question:**
-
-    Question text
-
-    **Answer:**
-
-    Answer text
-
+    Expected compact markdown format:
     ---
+    card_id: abc123
+    ---
+    Question text
+    ---
+    Answer text
+    ---
+    card_id: null
+    ---
+    Next question
+    ---
+    Next answer
+
+    Cards are separated by ---. All cards have frontmatter.
+    If card_id is a valid ID, the card will be updated.
+    If card_id is null/empty, a new card will be created.
 
     Args:
         deck_id: Deck ID to add cards to
         input_file: Path to markdown file
 
     Returns:
-        List of created card IDs
+        Tuple of (created_ids, updated_ids)
     """
     print(f"Reading cards from {input_file}...")
 
@@ -320,33 +326,69 @@ def upload_cards_from_markdown(deck_id, input_file):
         content = f.read()
 
     # Split by --- separator
-    sections = content.split('---')
+    sections = [s.strip() for s in content.split('---')]
     created_ids = []
+    updated_ids = []
 
-    for i, section in enumerate(sections, 1):
-        section = section.strip()
+    # State machine parser
+    state = 'expect_frontmatter'  # expect_frontmatter, expect_question, expect_answer
+    card_id = None
+    question = None
+    card_num = 0
+
+    for section in sections:
         if not section:
             continue
 
-        # Extract question
-        q_start = section.find('**Question:**') + len('**Question:**')
-        q_end = section.find('**Answer:**')
-        question = section[q_start:q_end].strip()
+        # Skip headers
+        if section.startswith('#'):
+            continue
 
-        # Extract answer
-        a_start = section.find('**Answer:**') + len('**Answer:**')
-        answer = section[a_start:].strip()
+        if state == 'expect_frontmatter':
+            # Check if this is a card_id frontmatter
+            if section.strip().startswith('card_id:'):
+                card_id_value = section.split('card_id:')[1].strip().split()[0]
+                # Treat 'null', 'None', empty, or whitespace as no ID
+                if card_id_value.lower() in ('null', 'none', '') or not card_id_value:
+                    card_id = None
+                else:
+                    card_id = card_id_value
+                state = 'expect_question'
+            else:
+                # Malformed - this should be frontmatter but isn't
+                # Treat as question for backwards compatibility
+                question = section
+                state = 'expect_answer'
 
-        # Create card content in Mochi format
-        card_content = f"{question}\n---\n{answer}"
+        elif state == 'expect_question':
+            question = section
+            state = 'expect_answer'
 
-        print(f"  Creating card {i}...", end=' ', flush=True)
-        created_card = create_card(deck_id, card_content)
-        created_ids.append(created_card['id'])
-        print(f"✓ (ID: {created_card['id']})")
+        elif state == 'expect_answer':
+            answer = section
+            card_num += 1
 
-    print(f"\n✓ Successfully created {len(created_ids)} cards")
-    return created_ids
+            # Create card content in Mochi format
+            card_content = f"{question}\n---\n{answer}"
+
+            if card_id:
+                print(f"  Updating card {card_num} (ID: {card_id})...", end=' ', flush=True)
+                update_card(card_id, content=card_content)
+                updated_ids.append(card_id)
+                print("✓")
+            else:
+                print(f"  Creating card {card_num}...", end=' ', flush=True)
+                created_card = create_card(deck_id, card_content)
+                created_ids.append(created_card['id'])
+                print(f"✓ (ID: {created_card['id']})")
+
+            # Reset state
+            card_id = None
+            question = None
+            state = 'expect_frontmatter'
+
+    print(f"\n✓ Successfully created {len(created_ids)} cards and updated {len(updated_ids)} cards")
+    return created_ids, updated_ids
 
 
 def display_grading_results(imperfect_cards, all_results):
@@ -635,11 +677,9 @@ def find_deck(decks, deck_name=None, deck_id=None):
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Mochi flashcard management")
-    parser.add_argument("--deck-name", help="Deck name (partial match supported)")
-    parser.add_argument("--deck-id", help="Deck ID")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-    subparsers.add_parser("list", help="List all cards in a deck")
+    subparsers.add_parser("list", help="List all cards in the deck")
 
     grade_parser = subparsers.add_parser("grade", help="Grade all cards using LLM")
     grade_parser.add_argument("--batch-size", type=int, default=20,
@@ -653,13 +693,11 @@ def parse_args():
     upload_parser.add_argument("--input", "-i", required=True,
                               help="Input markdown file")
 
-    subparsers.add_parser("decks", help="List all available decks")
-
     # Task command with subcommands
     task_parser = subparsers.add_parser("task", help="Run LLM tasks on cards")
     task_subparsers = task_parser.add_subparsers(dest="task_subcommand", help="Task subcommand")
 
-    task_list_parser = task_subparsers.add_parser("list", help="List all available tasks")
+    _ = task_subparsers.add_parser("list", help="List all available tasks")
 
     task_run_parser = task_subparsers.add_parser("run", help="Run a specific task")
     task_run_parser.add_argument("task_name", help="Name of the task to run")
@@ -672,7 +710,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Handle task list command (doesn't need decks)
+    # Handle task list command
     if args.command == "task" and args.task_subcommand == "list":
         tasks = discover_tasks()
         if not tasks:
@@ -690,35 +728,27 @@ def main():
             print("-" * 60)
         return
 
-    print("Fetching decks...")
-    decks = get_decks()
-
-    if args.command == "decks":
-        print(f"\nAvailable decks ({len(decks)}):\n" + "=" * 60)
-        for deck in decks:
-            print(f"  {deck['name']}\n    ID: {deck['id']}\n" + "-" * 60)
-        return
-
-    deck = find_deck(decks, deck_name=args.deck_name, deck_id=args.deck_id)
-    if not deck:
-        print("\nAvailable decks:")
-        for d in decks:
-            print(f"  - {d['name']} (id: {d['id']})")
-        search_info = f" (searched: {args.deck_name or args.deck_id})" if args.deck_name or args.deck_id else ""
-        print(f"\nDeck not found{search_info}. Specify --deck-name or --deck-id")
+    # Validate required environment variables
+    if not API_KEY:
+        print("Error: MOCHI_API_KEY not found in .env file")
         sys.exit(1)
 
+    if not DECK_ID:
+        print("Error: DECK_ID not found in .env file")
+        sys.exit(1)
+
+    # All other commands use the deck from .env
     if args.command == "list" or args.command is None:
-        list_cards(deck["id"], deck["name"])
+        list_cards(DECK_ID)
     elif args.command == "grade":
-        imperfect_cards, all_results = grade_all_cards(deck["id"], batch_size=args.batch_size)
+        imperfect_cards, all_results = grade_all_cards(DECK_ID, batch_size=args.batch_size)
         display_grading_results(imperfect_cards, all_results)
     elif args.command == "dump":
-        dump_cards_to_markdown(deck["id"], args.output)
+        dump_cards_to_markdown(DECK_ID, args.output)
     elif args.command == "upload":
-        upload_cards_from_markdown(deck["id"], args.input)
+        upload_cards_from_markdown(DECK_ID, args.input)
     elif args.command == "task" and args.task_subcommand == "run":
-        execute_task(args.task_name, deck["id"], apply=args.apply)
+        execute_task(args.task_name, DECK_ID, apply=args.apply)
 
 
 if __name__ == "__main__":
