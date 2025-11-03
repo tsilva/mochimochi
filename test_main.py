@@ -196,36 +196,84 @@ class TestGrading:
             assert len(results) == 1
             assert results[0][1] == 8
 
+    def test_grade_cards_batch_missing_grades(self, sample_cards, mock_env):
+        """Test grading when LLM doesn't return all grades."""
+        # LLM only returns grade for card1, not card2
+        partial_response = {
+            "choices": [{
+                "message": {
+                    "content": '[{"card_id": "card1", "score": 10, "justification": "Perfect"}]'
+                }
+            }]
+        }
 
-class TestMarkdownExport:
-    """Test markdown export functionality."""
+        with patch('requests.post') as mock_post, \
+             patch('builtins.print'):  # Suppress warning output
+            mock_post.return_value.json.return_value = partial_response
+            mock_post.return_value.raise_for_status = Mock()
 
-    def test_dump_cards_to_markdown(self, sample_cards, tmp_path):
-        """Test exporting cards to markdown file."""
-        output_file = tmp_path / "test_export.md"
+            results = main.grade_cards_batch(sample_cards)  # 2 cards
+            # Should only return result for card1
+            assert len(results) == 1
+            assert results[0][0]['id'] == 'card1'
+            assert results[0][1] == 10
 
-        with patch('main.get_cards', return_value=sample_cards):
-            count = main.dump_cards_to_markdown('deck1', str(output_file))
 
-        assert count == 2
-        assert output_file.exists()
+class TestCLI:
+    """Test CLI argument parsing."""
 
-        content = output_file.read_text()
-        assert "# Mochi Cards Export" in content
-        assert "Total cards: 2" in content
-        assert "card_id: card1" in content
-        assert "card_id: card2" in content
-        assert "What is Python?" in content
-        assert "A programming language" in content
-        assert "What is ML?" in content
+    def test_parse_args_grade_with_batch_size(self):
+        """Test grade command with batch size."""
+        with patch('sys.argv', ['main.py', 'grade', '--batch-size', '10']):
+            args = main.parse_args()
+            assert args.command == 'grade'
+            assert args.batch_size == 10
 
-    def test_upload_cards_from_markdown_compact_format(self, tmp_path):
-        """Test uploading cards with compact format."""
-        input_file = tmp_path / "test_upload.md"
-        input_file.write_text("""# Test Cards
+    def test_parse_args_pull(self):
+        """Test pull command parsing."""
+        with patch('sys.argv', ['main.py', 'pull']):
+            args = main.parse_args()
+            assert args.command == 'pull'
+
+    def test_parse_args_push_with_force(self):
+        """Test push command with force flag."""
+        with patch('sys.argv', ['main.py', 'push', '--force']):
+            args = main.parse_args()
+            assert args.command == 'push'
+            assert args.force is True
+
+    def test_parse_args_status(self):
+        """Test status command parsing."""
+        with patch('sys.argv', ['main.py', 'status']):
+            args = main.parse_args()
+            assert args.command == 'status'
+
+
+class TestSyncFunctions:
+    """Test sync-related utility functions."""
+
+    def test_content_hash(self):
+        """Test content hashing."""
+        q1, a1 = "What is Python?", "A programming language"
+        q2, a2 = "What is Python?", "A programming language"
+        q3, a3 = "What is ML?", "Machine Learning"
+
+        hash1 = main.content_hash(q1, a1)
+        hash2 = main.content_hash(q2, a2)
+        hash3 = main.content_hash(q3, a3)
+
+        assert hash1 == hash2  # Same content = same hash
+        assert hash1 != hash3  # Different content = different hash
+        assert len(hash1) == 16  # Hash should be 16 chars
+
+    def test_parse_markdown_cards(self):
+        """Test parsing markdown cards with frontmatter."""
+        markdown = """# Test Cards
 
 ---
-card_id: existing123
+card_id: abc123
+tags: ["python", "basics"]
+archived: false
 ---
 What is Python?
 ---
@@ -236,51 +284,56 @@ card_id: null
 What is ML?
 ---
 Machine Learning
-""")
+"""
+        cards = main.parse_markdown_cards(markdown)
 
-        with patch('main.create_card') as mock_create, \
-             patch('main.update_card') as mock_update:
-            mock_create.return_value = {'id': 'new456'}
+        assert len(cards) == 2
 
-            created, updated = main.upload_cards_from_markdown('deck1', str(input_file))
+        # First card with ID
+        assert cards[0]['card_id'] == 'abc123'
+        assert cards[0]['question'] == 'What is Python?'
+        assert cards[0]['answer'] == 'A programming language'
+        assert cards[0]['tags'] == ['python', 'basics']
+        assert cards[0]['archived'] is False
 
-        assert len(updated) == 1
-        assert updated[0] == 'existing123'
-        assert len(created) == 1
-        assert created[0] == 'new456'
+        # Second card without ID
+        assert cards[1]['card_id'] is None
+        assert cards[1]['question'] == 'What is ML?'
+        assert cards[1]['answer'] == 'Machine Learning'
 
-        # Verify update was called with correct content
-        mock_update.assert_called_once()
-        assert mock_update.call_args[0][0] == 'existing123'
-        assert 'What is Python?' in mock_update.call_args[1]['content']
+    def test_format_card_to_markdown(self):
+        """Test formatting card dict to markdown."""
+        card = {
+            'card_id': 'abc123',
+            'question': 'What is Python?',
+            'answer': 'A programming language',
+            'tags': ['python', 'basics'],
+            'archived': False
+        }
 
-        # Verify create was called with correct content
-        mock_create.assert_called_once()
-        assert 'What is ML?' in mock_create.call_args[0][1]
+        markdown = main.format_card_to_markdown(card)
 
+        assert 'card_id: abc123' in markdown
+        assert 'tags: ["python", "basics"]' in markdown
+        assert 'What is Python?' in markdown
+        assert 'A programming language' in markdown
+        assert 'archived' not in markdown  # Should not include if False
 
-class TestCLI:
-    """Test CLI argument parsing."""
+    def test_format_card_to_markdown_archived(self):
+        """Test formatting archived card."""
+        card = {
+            'card_id': 'xyz789',
+            'question': 'Old question',
+            'answer': 'Old answer',
+            'tags': [],
+            'archived': True
+        }
 
-    def test_parse_args_list(self):
-        """Test list command parsing."""
-        with patch('sys.argv', ['main.py', 'list']):
-            args = main.parse_args()
-            assert args.command == 'list'
+        markdown = main.format_card_to_markdown(card)
 
-    def test_parse_args_grade_with_batch_size(self):
-        """Test grade command with batch size."""
-        with patch('sys.argv', ['main.py', 'grade', '--batch-size', '10']):
-            args = main.parse_args()
-            assert args.command == 'grade'
-            assert args.batch_size == 10
-
-    def test_parse_args_dump_with_output(self):
-        """Test dump command with output file."""
-        with patch('sys.argv', ['main.py', 'dump', '--output', 'cards.md']):
-            args = main.parse_args()
-            assert args.command == 'dump'
-            assert args.output == 'cards.md'
+        assert 'card_id: xyz789' in markdown
+        assert 'archived: true' in markdown
+        assert 'Old question' in markdown
 
 
 if __name__ == '__main__':

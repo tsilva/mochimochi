@@ -211,3 +211,4 @@ mochi_cards.md
 *_cards.md
 
 .env
+.mochi_sync/
