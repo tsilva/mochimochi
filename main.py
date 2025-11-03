@@ -679,6 +679,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Mochi flashcard management")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    subparsers.add_parser("decks", help="List all available decks")
     subparsers.add_parser("list", help="List all cards in the deck")
 
     grade_parser = subparsers.add_parser("grade", help="Grade all cards using LLM")
@@ -710,7 +711,9 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Handle task list command
+    # Handle commands that don't require DECK_ID
+
+    # List available tasks
     if args.command == "task" and args.task_subcommand == "list":
         tasks = discover_tasks()
         if not tasks:
@@ -728,16 +731,34 @@ def main():
             print("-" * 60)
         return
 
-    # Validate required environment variables
+    # List all decks (requires only API_KEY, not DECK_ID)
+    if args.command == "decks":
+        if not API_KEY:
+            print("Error: MOCHI_API_KEY not found in .env file")
+            sys.exit(1)
+
+        print("Fetching decks...")
+        decks = get_decks()
+        print(f"\nAvailable decks ({len(decks)}):\n" + "=" * 60)
+        for deck in decks:
+            print(f"\n  {deck['name']}")
+            print(f"  ID: {deck['id']}")
+            print("-" * 60)
+        print("\nTo use a deck, add its ID to your .env file:")
+        print("DECK_ID=<deck_id>")
+        return
+
+    # All other commands require both API_KEY and DECK_ID
     if not API_KEY:
         print("Error: MOCHI_API_KEY not found in .env file")
         sys.exit(1)
 
     if not DECK_ID:
         print("Error: DECK_ID not found in .env file")
+        print("\nRun 'python main.py decks' to see available decks and get their IDs")
         sys.exit(1)
 
-    # All other commands use the deck from .env
+    # Commands that work on the configured deck
     if args.command == "list" or args.command is None:
         list_cards(DECK_ID)
     elif args.command == "grade":

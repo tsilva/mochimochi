@@ -70,6 +70,15 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 
 The script can be run directly or via the installed `mochi-cards` command. All commands operate on the deck specified in your `.env` file.
 
+#### List available decks (to find deck ID)
+```bash
+python main.py decks
+# or
+mochi-cards decks
+```
+
+This command only requires `MOCHI_API_KEY` and displays all your decks with their IDs.
+
 #### List all cards
 ```bash
 python main.py list

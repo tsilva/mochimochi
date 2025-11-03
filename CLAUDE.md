@@ -23,14 +23,17 @@ mochi-cards <command>
 ```
 
 ### Available Commands
-All commands operate on the single deck specified in `.env` via `DECK_ID`.
+Most commands operate on the single deck specified in `.env` via `DECK_ID`.
 
 ```bash
+python main.py decks                         # List all decks (only needs API_KEY)
 python main.py list                          # List all cards in the deck
 python main.py grade --batch-size 20         # Grade cards using LLM
 python main.py dump --output cards.md        # Export cards to markdown with frontmatter
 python main.py upload --input cards.md       # Import cards from markdown (create/update)
 ```
+
+The `decks` command is special - it only requires `MOCHI_API_KEY` and helps you find deck IDs.
 
 ### Running Tests
 ```bash
