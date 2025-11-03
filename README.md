@@ -10,7 +10,7 @@ A Python tool for managing and grading Mochi flashcards via the Mochi API. This 
 - 🗑️ **Delete Cards**: Remove cards via API
 - 🤖 **AI Grading**: Automatically grade flashcards using OpenRouter's Gemini 2.5 Flash LLM
 - 📝 **Export to Markdown**: Export all cards to a markdown file for backup or review
-- 🧪 **Test Operations**: Built-in test mode to verify API functionality
+- 🧪 **Test Suite**: Comprehensive pytest-based test suite with unit and integration tests
 
 ## Installation
 
@@ -64,28 +64,21 @@ The script can be run directly or via the installed `mochi-cards` command:
 
 #### List all cards in AI/ML deck
 ```bash
-python list_mochi_cards.py
+python main.py
 # or
 mochi-cards
 ```
 
-#### Test create/update/delete operations
-```bash
-python list_mochi_cards.py test
-# or
-mochi-cards test
-```
-
 #### Grade all cards using LLM (shows cards with score < 10)
 ```bash
-python list_mochi_cards.py grade
+python main.py grade
 # or
 mochi-cards grade
 ```
 
 #### Export cards to markdown
 ```bash
-python list_mochi_cards.py dump [output_file.md]
+python main.py dump [output_file.md]
 # or
 mochi-cards dump [output_file.md]
 ```
@@ -97,7 +90,7 @@ If no output file is specified, defaults to `mochi_cards.md`.
 You can also import and use the functions directly in your Python code:
 
 ```python
-from list_mochi_cards import (
+from main import (
     get_decks,
     get_cards,
     create_card,
@@ -225,6 +218,40 @@ What is the time complexity of binary search?
 ---
 O(log n) - logarithmic time complexity
 ```
+
+## Development & Testing
+
+### Running Tests
+
+The project includes a comprehensive test suite using pytest:
+
+```bash
+# Install with dev dependencies
+uv sync --extra dev
+
+# Run unit tests (no API required)
+pytest -m "not integration"
+
+# Run all tests including integration tests (requires TEST_DECK_ID)
+TEST_DECK_ID=your_deck_id pytest
+
+# Run with verbose output
+pytest -v
+```
+
+See [TESTING.md](TESTING.md) for detailed testing documentation.
+
+### Test Coverage
+
+- **17 unit tests** - Mocked tests for utilities, parsing, and CLI
+- **3 integration tests** - Live API tests (require `TEST_DECK_ID` environment variable)
+
+Unit tests cover:
+- Card parsing (question/answer separation)
+- Deck finding (by ID, name, partial match)
+- LLM grading response parsing
+- Markdown export
+- CLI argument parsing
 
 ## Notes
 
