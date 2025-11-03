@@ -1,35 +1,11 @@
 #!/usr/bin/env python3
 """Mochi flashcard management script.
 
-Usage:
-    python main.py list                    # List all cards in a deck
-    python main.py test                    # Test create/update/delete operations
-    python main.py grade                   # Grade all cards using LLM
-    python main.py dump                    # Dump all cards to markdown file
-    python main.py decks                   # List all available decks
-
-API Functions:
-    get_decks()                         # List all decks
-    get_cards(deck_id, limit=100)       # Get all cards in a deck
-    create_card(deck_id, content, **kwargs)  # Create a new card
-    update_card(card_id, **kwargs)      # Update an existing card
-    delete_card(card_id)                # Delete a card
-    grade_all_cards(deck_id, batch_size=20)  # Grade cards using LLM
-    dump_cards_to_markdown(deck_id, output_file)  # Export cards to markdown
-
-Example:
+Example usage:
     from main import create_card, update_card, delete_card, grade_all_cards
-
-    # Create a card
     card = create_card(deck_id, "What is X?\n---\nX is Y")
-
-    # Update a card
-    update_card(card['id'], content="Updated content")
-
-    # Delete a card
+    update_card(card['id'], content="Updated")
     delete_card(card['id'])
-
-    # Grade cards
     imperfect_cards, all_results = grade_all_cards(deck_id)
 """
 
@@ -50,6 +26,12 @@ if not API_KEY:
 
 BASE_URL = "https://app.mochi.cards/api"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def parse_card(content):
+    """Parse card content into question and answer."""
+    q, _, a = content.partition('---')
+    return q.strip(), a.strip()
 
 
 def get_decks():
@@ -160,12 +142,7 @@ Cards to grade:
 """
 
     for i, card in enumerate(cards_batch, 1):
-        content = card.get('content', '')
-        # Split on --- to get question and answer
-        parts = content.split('---', 1)
-        question = parts[0].strip() if len(parts) > 0 else ''
-        answer = parts[1].strip() if len(parts) > 1 else ''
-
+        question, answer = parse_card(card.get('content', ''))
         prompt += f"\n{i}. Card ID: {card['id']}\n"
         prompt += f"   Question: {question}\n"
         prompt += f"   Answer: {answer}\n"
@@ -195,41 +172,21 @@ Cards to grade:
     result = response.json()
     content = result["choices"][0]["message"]["content"]
 
-    # Parse JSON response
     try:
         grades = json.loads(content)
+        if isinstance(grades, dict):
+            grades = next((v for v in grades.values() if isinstance(v, list)), [])
     except json.JSONDecodeError as e:
-        print(f"Error parsing JSON: {e}")
-        print(f"Response content: {content[:500]}")
+        print(f"Error parsing JSON: {e}\nResponse: {content[:500]}")
         raise
 
-    # Handle both array and object with array
-    if isinstance(grades, dict) and 'grades' in grades:
-        grades = grades['grades']
-    elif isinstance(grades, dict) and 'cards' in grades:
-        grades = grades['cards']
-    elif isinstance(grades, list):
-        pass  # Already a list
-    else:
-        # Try to extract array from any key
-        for key in grades.keys():
-            if isinstance(grades[key], list):
-                grades = grades[key]
-                break
-
-    # Match grades with cards
-    results = []
     grade_map = {g['card_id']: (g['score'], g['justification']) for g in grades}
-
+    results = []
     for card in cards_batch:
-        card_id = card['id']
-        if card_id in grade_map:
-            score, justification = grade_map[card_id]
-            results.append((card, score, justification))
+        if card['id'] in grade_map:
+            results.append((card, *grade_map[card['id']]))
         else:
-            # Card wasn't graded - add warning
-            print(f"Warning: Card {card_id} was not graded by the LLM")
-
+            print(f"Warning: Card {card['id']} was not graded by the LLM")
     return results
 
 
@@ -312,100 +269,31 @@ def get_cards(deck_id, limit=100):
     return cards
 
 
-def test_card_operations(deck_id):
-    """Test create, update, and delete operations with a temporary card."""
-    print("\n" + "=" * 80)
-    print("TESTING CARD OPERATIONS (creating temporary test card)")
-    print("=" * 80)
-
-    # Create a test card
-    print("\n1. Creating test card...")
-    test_content = """What is a **test card**?
----
-This is a temporary test card created by the API. It will be deleted shortly."""
-
-    created_card = create_card(deck_id, test_content)
-    card_id = created_card["id"]
-    print(f"   ✓ Created card with ID: {card_id}")
-    print(f"   Content: {test_content.split('---')[0].strip()}")
-
-    # Update the card
-    print("\n2. Updating test card...")
-    updated_content = """What is an **updated test card**?
----
-This card has been updated via the API. It will be deleted shortly."""
-
-    update_card(card_id, content=updated_content)
-    print(f"   ✓ Updated card {card_id}")
-    print(f"   New content: {updated_content.split('---')[0].strip()}")
-
-    # Delete the card
-    print("\n3. Deleting test card...")
-    delete_card(card_id)
-    print(f"   ✓ Deleted card {card_id}")
-
-    print("\n" + "=" * 80)
-    print("TEST COMPLETED SUCCESSFULLY")
-    print("=" * 80)
-
-
 def list_cards(deck_id, deck_name):
     """List all cards in a deck."""
-    print(f"Found deck: {deck_name}\n")
-    print("Fetching cards...")
+    print(f"Found deck: {deck_name}\nFetching cards...")
     cards = get_cards(deck_id)
-
-    print(f"\nTotal cards: {len(cards)}")
-    print("=" * 80)
+    print(f"\nTotal cards: {len(cards)}\n" + "=" * 60)
 
     for i, card in enumerate(cards, 1):
-        print(f"\nCard {i}:")
-        print(f"ID: {card['id']}")
         content = card.get('content', '')
-        if len(content) > 200:
-            print(f"Content:\n{content[:200]}...")
-        else:
-            print(f"Content:\n{content}")
-        print("-" * 80)
+        truncated = content[:200] + '...' if len(content) > 200 else content
+        print(f"\nCard {i} (ID: {card['id']}):\n{truncated}\n" + "-" * 60)
 
 
 def dump_cards_to_markdown(deck_id, output_file="mochi_cards.md"):
-    """Dump all cards to a markdown file.
-
-    Args:
-        deck_id: Deck ID to export cards from
-        output_file: Output markdown file path (default: mochi_cards.md)
-
-    Returns:
-        Number of cards exported
-    """
+    """Dump all cards to a markdown file."""
     print("Fetching cards...")
     cards = get_cards(deck_id)
-
     print(f"Exporting {len(cards)} cards to {output_file}...")
 
     with open(output_file, 'w', encoding='utf-8') as f:
-        f.write("# Mochi Cards Export\n\n")
-        f.write(f"Total cards: {len(cards)}\n\n")
-        f.write("---\n\n")
-
+        f.write(f"# Mochi Cards Export\n\nTotal cards: {len(cards)}\n\n---\n\n")
         for i, card in enumerate(cards, 1):
-            content = card.get('content', '')
-            parts = content.split('---', 1)
-            question = parts[0].strip() if len(parts) > 0 else ''
-            answer = parts[1].strip() if len(parts) > 1 else ''
-
-            # Write card with heading
-            f.write(f"## Card {i}\n\n")
-            f.write(f"<!-- Card ID: {card['id']} -->\n\n")
-
-            # Write question
+            question, answer = parse_card(card.get('content', ''))
+            f.write(f"## Card {i}\n\n<!-- Card ID: {card['id']} -->\n\n")
             f.write(f"**Question:**\n\n{question}\n\n")
-
-            # Write answer
-            f.write(f"**Answer:**\n\n{answer}\n\n")
-
-            f.write("---\n\n")
+            f.write(f"**Answer:**\n\n{answer}\n\n---\n\n")
 
     print(f"✓ Exported {len(cards)} cards to {output_file}")
     return len(cards)
@@ -413,192 +301,87 @@ def dump_cards_to_markdown(deck_id, output_file="mochi_cards.md"):
 
 def display_grading_results(imperfect_cards, all_results):
     """Display grading results."""
-    print("\n" + "=" * 80)
-    print("GRADING RESULTS")
-    print("=" * 80)
+    sep = "=" * 60
+    print(f"\n{sep}\nGRADING RESULTS\n{sep}")
 
-    total_graded = len(all_results)
-    perfect_count = total_graded - len(imperfect_cards)
+    total, perfect = len(all_results), len(all_results) - len(imperfect_cards)
+    print(f"\nTotal: {total} | Perfect (10/10): {perfect} | Need review: {len(imperfect_cards)}")
 
-    print(f"\nTotal cards graded: {total_graded}")
-    print(f"Perfect scores (10/10): {perfect_count}")
-    print(f"Cards needing review (< 10): {len(imperfect_cards)}")
-
-    if imperfect_cards:
-        print("\n" + "=" * 80)
-        print("CARDS NEEDING REVIEW")
-        print("=" * 80)
-
-        # Sort by score (lowest first)
-        imperfect_cards.sort(key=lambda x: x[1])
-
-        for i, (card, score, justification) in enumerate(imperfect_cards, 1):
-            content = card.get('content', '')
-            parts = content.split('---', 1)
-            question = parts[0].strip() if len(parts) > 0 else ''
-            answer = parts[1].strip() if len(parts) > 1 else ''
-
-            print(f"\n{i}. Score: {score}/10")
-            print(f"   Card ID: {card['id']}")
-            print(f"   Question: {question[:100]}{'...' if len(question) > 100 else ''}")
-            print(f"   Answer: {answer[:150]}{'...' if len(answer) > 150 else ''}")
-            print(f"   Issue: {justification}")
-            print("-" * 80)
-    else:
+    if not imperfect_cards:
         print("\n🎉 All cards are perfect!")
+        return
+
+    print(f"\n{sep}\nCARDS NEEDING REVIEW\n{sep}")
+    for i, (card, score, justification) in enumerate(sorted(imperfect_cards, key=lambda x: x[1]), 1):
+        question, answer = parse_card(card.get('content', ''))
+        q_trunc = question[:100] + '...' if len(question) > 100 else question
+        a_trunc = answer[:150] + '...' if len(answer) > 150 else answer
+        print(f"\n{i}. Score: {score}/10 | ID: {card['id']}")
+        print(f"   Q: {q_trunc}")
+        print(f"   A: {a_trunc}")
+        print(f"   Issue: {justification}")
+        print("-" * 60)
 
 
 def find_deck(decks, deck_name=None, deck_id=None):
-    """Find a deck by name or ID.
-    
-    Args:
-        decks: List of deck dictionaries
-        deck_name: Name of the deck to find (partial match supported)
-        deck_id: ID of the deck to find
-        
-    Returns:
-        Deck dictionary or None
-    """
+    """Find a deck by name or ID (partial match supported)."""
     if deck_id:
-        for deck in decks:
-            if deck['id'] == deck_id:
-                return deck
-        return None
-    
+        return next((d for d in decks if d['id'] == deck_id), None)
     if deck_name:
-        # Try exact match first
-        for deck in decks:
-            if deck['name'] == deck_name:
-                return deck
-        
-        # Try partial match
-        for deck in decks:
-            if deck_name.lower() in deck['name'].lower():
-                return deck
-        
-        return None
-    
-    # Default: look for AI/ML deck
-    for deck in decks:
-        if "AI/ML" in deck["name"] or "AIML" in deck["name"]:
-            return deck
-    
-    return None
-
-
-def list_decks_command():
-    """List all available decks."""
-    print("Fetching decks...")
-    decks = get_decks()
-    
-    print(f"\nAvailable decks ({len(decks)}):")
-    print("=" * 80)
-    for deck in decks:
-        print(f"  {deck['name']}")
-        print(f"    ID: {deck['id']}")
-        print("-" * 80)
+        return (next((d for d in decks if d['name'] == deck_name), None) or
+                next((d for d in decks if deck_name.lower() in d['name'].lower()), None))
+    return next((d for d in decks if "AI/ML" in d["name"] or "AIML" in d["name"]), None)
 
 
 def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Mochi flashcard management script",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s list                           # List cards in default deck (AI/ML)
-  %(prog)s list --deck-name "My Deck"     # List cards in specific deck
-  %(prog)s list --deck-id "abc123"        # List cards by deck ID
-  %(prog)s test                           # Test card operations
-  %(prog)s grade --batch-size 10          # Grade cards with custom batch size
-  %(prog)s dump --output cards.md         # Export cards to markdown
-  %(prog)s decks                          # List all available decks
-        """
-    )
-    
-    parser.add_argument(
-        "--deck-name",
-        help="Deck name to use (partial match supported)"
-    )
-    parser.add_argument(
-        "--deck-id",
-        help="Deck ID to use"
-    )
-    
+    parser = argparse.ArgumentParser(description="Mochi flashcard management")
+    parser.add_argument("--deck-name", help="Deck name (partial match supported)")
+    parser.add_argument("--deck-id", help="Deck ID")
+
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-    
-    # List command
-    list_parser = subparsers.add_parser("list", help="List all cards in a deck")
-    
-    # Test command
-    test_parser = subparsers.add_parser("test", help="Test create/update/delete operations")
-    
-    # Grade command
+    subparsers.add_parser("list", help="List all cards in a deck")
+
     grade_parser = subparsers.add_parser("grade", help="Grade all cards using LLM")
-    grade_parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=20,
-        help="Number of cards per batch (default: 20)"
-    )
-    
-    # Dump command
-    dump_parser = subparsers.add_parser("dump", help="Export cards to markdown file")
-    dump_parser.add_argument(
-        "--output",
-        "-o",
-        default="mochi_cards.md",
-        help="Output markdown file (default: mochi_cards.md)"
-    )
-    
-    # Decks command
+    grade_parser.add_argument("--batch-size", type=int, default=20,
+                             help="Cards per batch (default: 20)")
+
+    dump_parser = subparsers.add_parser("dump", help="Export cards to markdown")
+    dump_parser.add_argument("--output", "-o", default="mochi_cards.md",
+                            help="Output file (default: mochi_cards.md)")
+
     subparsers.add_parser("decks", help="List all available decks")
-    
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    
-    # Handle decks command (doesn't need deck selection)
-    if args.command == "decks":
-        list_decks_command()
-        return
-    
-    # For other commands, we need to find a deck
+
     print("Fetching decks...")
     decks = get_decks()
-    
+
+    if args.command == "decks":
+        print(f"\nAvailable decks ({len(decks)}):\n" + "=" * 60)
+        for deck in decks:
+            print(f"  {deck['name']}\n    ID: {deck['id']}\n" + "-" * 60)
+        return
+
     deck = find_deck(decks, deck_name=args.deck_name, deck_id=args.deck_id)
-    
     if not deck:
         print("\nAvailable decks:")
         for d in decks:
             print(f"  - {d['name']} (id: {d['id']})")
-        
-        if args.deck_name or args.deck_id:
-            print(f"\nDeck not found.")
-            if args.deck_name:
-                print(f"  Searched for name: {args.deck_name}")
-            if args.deck_id:
-                print(f"  Searched for ID: {args.deck_id}")
-        else:
-            print("\nNo 'AI/ML' deck found. Please specify --deck-name or --deck-id")
+        search_info = f" (searched: {args.deck_name or args.deck_id})" if args.deck_name or args.deck_id else ""
+        print(f"\nDeck not found{search_info}. Specify --deck-name or --deck-id")
         sys.exit(1)
-    
-    # Execute the requested command
+
     if args.command == "list" or args.command is None:
         list_cards(deck["id"], deck["name"])
-    elif args.command == "test":
-        test_card_operations(deck["id"])
     elif args.command == "grade":
         imperfect_cards, all_results = grade_all_cards(deck["id"], batch_size=args.batch_size)
         display_grading_results(imperfect_cards, all_results)
     elif args.command == "dump":
         dump_cards_to_markdown(deck["id"], args.output)
-    else:
-        print(f"Unknown command: {args.command}")
-        sys.exit(1)
 
 
 if __name__ == "__main__":
