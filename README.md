@@ -127,4 +127,6 @@ Prompted by **tsilva** ⚡ Assembled by LLM agents 😮‍💨
 
 ---
 
+**Star this repo if it helps your learning! ⭐**
+
 **[Report Bug](https://github.com/tsilva/mochi-mochi/issues)** • **[Request Feature](https://github.com/tsilva/mochi-mochi/issues)**
