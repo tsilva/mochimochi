@@ -32,6 +32,7 @@ CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
 # Global API key (set in main())
 API_KEY = None
 OPENAI_API_KEY = None
+OPENROUTER_API_KEY = None
 
 
 def load_user_config():
@@ -139,6 +140,45 @@ def get_openai_api_key():
             for key, value in config.items():
                 f.write(f"{key}={value}\n")
         print(f"\n✓ OpenAI API key saved to {CONFIG_PATH}")
+    except Exception as e:
+        print(f"Warning: Failed to save config: {e}")
+        print("Continuing with current session...")
+
+    return api_key
+
+
+def get_openrouter_api_key():
+    """Get OpenRouter API key from user config, prompting if not found.
+
+    Returns:
+        str: OpenRouter API key
+    """
+    config = load_user_config()
+
+    if "OPENROUTER_API_KEY" in config:
+        return config["OPENROUTER_API_KEY"]
+
+    # Prompt user for API key
+    print("\nOpenRouter API key not found.")
+    print("You can get your API key from: https://openrouter.ai/keys")
+    print()
+
+    api_key = input("Enter your OpenRouter API key: ").strip()
+
+    if not api_key:
+        print("Error: API key cannot be empty")
+        sys.exit(1)
+
+    # Load existing config to preserve other values
+    config['OPENROUTER_API_KEY'] = api_key
+
+    # Save config
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_PATH, 'w') as f:
+            for key, value in config.items():
+                f.write(f"{key}={value}\n")
+        print(f"\n✓ OpenRouter API key saved to {CONFIG_PATH}")
     except Exception as e:
         print(f"Warning: Failed to save config: {e}")
         print("Continuing with current session...")
@@ -682,6 +722,67 @@ def find_duplicate_pairs(cards, threshold=0.85):
     return pairs
 
 
+def classify_duplicate_pair(card1, card2, client):
+    """Use LLM to classify if cards are duplicates or complementary.
+
+    Args:
+        card1: First card dict with question and answer
+        card2: Second card dict with question and answer
+        client: OpenAI-compatible client (configured for OpenRouter)
+
+    Returns:
+        tuple: (classification, reasoning)
+        classification: 'duplicate', 'complementary', 'unclear', or 'error'
+        reasoning: Explanation from LLM or error message
+    """
+    prompt = f"""Compare these two flashcards and classify their relationship:
+
+Card 1:
+Q: {card1['question']}
+A: {card1['answer']}
+
+Card 2:
+Q: {card2['question']}
+A: {card2['answer']}
+
+Classify as ONE of:
+- "duplicate": Same concept, essentially redundant (one should be removed)
+- "complementary": Related but covering different aspects/opposite scenarios (both should be kept)
+- "unclear": Cannot determine confidently
+
+Respond with EXACTLY this format:
+classification | reasoning (one line explanation)
+
+Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing X - opposite scenarios of same concept"""
+
+    try:
+        response = client.chat.completions.create(
+            model="openai/gpt-4o-mini",  # Fast and cheap via OpenRouter
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=150
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse response
+        if '|' not in result:
+            return 'unclear', f"LLM response format invalid: {result[:50]}"
+
+        classification, _, reasoning = result.partition('|')
+        classification = classification.strip().lower()
+        reasoning = reasoning.strip()
+
+        # Validate classification
+        if classification not in ('duplicate', 'complementary', 'unclear'):
+            return 'unclear', f"Invalid classification '{classification}': {reasoning}"
+
+        return classification, reasoning
+
+    except Exception as e:
+        return 'error', f"LLM request failed: {str(e)[:100]}"
+
+
 def dedupe(file_path, threshold=0.85):
     """Find and remove duplicate cards from deck file using semantic similarity.
 
@@ -702,15 +803,21 @@ def dedupe(file_path, threshold=0.85):
         print("Not enough cards to deduplicate (need at least 2)")
         return
 
-    # Initialize OpenAI client
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    # Initialize OpenAI client for embeddings
+    embedding_client = OpenAI(api_key=OPENAI_API_KEY)
+
+    # Initialize OpenRouter client for classification
+    classification_client = OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1"
+    )
 
     print(f"Generating embeddings for {len(cards)} cards...")
     # Prepare all texts for batch processing
     texts = [f"{card['question']}\n{card['answer']}" for card in cards]
 
     # Get embeddings in batches (much faster than sequential)
-    embeddings = get_embeddings_batch(texts, client)
+    embeddings = get_embeddings_batch(texts, embedding_client)
 
     # Assign embeddings back to cards
     for card, embedding in zip(cards, embeddings):
@@ -725,12 +832,53 @@ def dedupe(file_path, threshold=0.85):
         print("✓ No duplicates found!")
         return
 
-    print(f"\nFound {len(pairs)} potential duplicate pair(s):\n")
+    print(f"\nFound {len(pairs)} potential duplicate pair(s)")
+    print(f"Classifying with LLM...")
 
-    # Interactive resolution
+    # Classify pairs with LLM
+    classified_pairs = []
+    for idx, (i, j, score) in enumerate(pairs, 1):
+        classification, reasoning = classify_duplicate_pair(
+            cards[i], cards[j], classification_client
+        )
+        classified_pairs.append({
+            'i': i,
+            'j': j,
+            'score': score,
+            'classification': classification,
+            'reasoning': reasoning
+        })
+        print(f"  {idx}/{len(pairs)} classified", end='\r')
+
+    print()  # Newline after progress
+
+    # Separate pairs by classification
+    complementary_pairs = [p for p in classified_pairs if p['classification'] == 'complementary']
+    needs_review = [p for p in classified_pairs if p['classification'] in ('duplicate', 'unclear', 'error')]
+
+    # Report auto-skipped complementary pairs
+    if complementary_pairs:
+        print(f"\n✓ Auto-skipped {len(complementary_pairs)} complementary pair(s):")
+        for p in complementary_pairs[:5]:  # Show first 5
+            card1, card2 = cards[p['i']], cards[p['j']]
+            q1_preview = card1['question'][:40] + '...' if len(card1['question']) > 40 else card1['question']
+            q2_preview = card2['question'][:40] + '...' if len(card2['question']) > 40 else card2['question']
+            print(f"  • {q1_preview} ↔ {q2_preview}")
+            print(f"    Reason: {p['reasoning'][:70]}...")
+        if len(complementary_pairs) > 5:
+            print(f"  ... and {len(complementary_pairs) - 5} more")
+
+    if not needs_review:
+        print("\n✓ No duplicates found after LLM review!")
+        return
+
+    print(f"\n{len(needs_review)} pair(s) need manual review:\n")
+
+    # Interactive resolution for unclear/duplicate/error pairs
     cards_to_remove = set()
 
-    for idx, (i, j, score) in enumerate(pairs, 1):
+    for idx, pair in enumerate(needs_review, 1):
+        i, j = pair['i'], pair['j']
         card1 = cards[i]
         card2 = cards[j]
 
@@ -739,8 +887,19 @@ def dedupe(file_path, threshold=0.85):
             continue
 
         print("=" * 70)
-        print(f"Pair {idx}/{len(pairs)} - Similarity: {score:.3f}")
+        print(f"Pair {idx}/{len(needs_review)} - Similarity: {pair['score']:.3f}")
         print("-" * 70)
+
+        # Show LLM classification
+        classification_emoji = {
+            'duplicate': '🔴',
+            'unclear': '🟡',
+            'error': '⚠️'
+        }
+        emoji = classification_emoji.get(pair['classification'], '❓')
+        print(f"\n{emoji} LLM Classification: {pair['classification'].upper()}")
+        print(f"   Reasoning: {pair['reasoning']}")
+
         print(f"\n[1] Card 1:")
         print(f"    Q: {card1['question'][:100]}{'...' if len(card1['question']) > 100 else ''}")
         print(f"    A: {card1['answer'][:100]}{'...' if len(card1['answer']) > 100 else ''}")
@@ -850,7 +1009,7 @@ def parse_args():
 
 
 def main():
-    global API_KEY, OPENAI_API_KEY
+    global API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY
     args = parse_args()
 
     # Load API key from config (prompts for MOCHI_API_KEY if not found)
@@ -876,8 +1035,9 @@ def main():
         push(args.file_path, force=args.force)
 
     elif args.command == "dedupe":
-        # Load OpenAI API key for dedupe command
+        # Load API keys for dedupe command
         OPENAI_API_KEY = get_openai_api_key()
+        OPENROUTER_API_KEY = get_openrouter_api_key()
         dedupe(args.file_path, threshold=args.threshold)
 
     elif args.command is None:
