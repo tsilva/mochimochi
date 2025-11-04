@@ -1,3 +1,5 @@
+<div align="center">
+
 # 🍡 mochi-mochi
 
 <img src="logo.png" alt="mochi-mochi logo" width="200">
@@ -8,6 +10,8 @@ Edit flashcards in markdown, track with git, sync to Mochi. Your local files are
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+</div>
 
 ---
 
