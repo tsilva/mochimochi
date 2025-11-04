@@ -15,7 +15,6 @@ API usage:
 
 import argparse
 import hashlib
-import importlib
 import json
 import os
 import sys
@@ -334,28 +333,6 @@ Cards to grade:
     # Only return results for cards that were graded
     results = [(card, *grade_map[card['id']]) for card in cards_batch if card['id'] in grade_map]
     return results
-
-
-def batched_cards(deck_id, batch_size=20):
-    """Iterator that yields batches of cards from a deck.
-
-    Similar to ML data loaders with shuffling turned off.
-
-    Args:
-        deck_id: Deck ID to fetch cards from
-        batch_size: Number of cards per batch (default: 20)
-
-    Yields:
-        Tuples of (batch, batch_num, total_batches) where batch is a list of cards
-    """
-    cards = get_cards(deck_id)
-    total_cards = len(cards)
-    total_batches = (total_cards + batch_size - 1) // batch_size
-
-    for i in range(0, total_cards, batch_size):
-        batch = cards[i:i+batch_size]
-        batch_num = (i // batch_size) + 1
-        yield batch, batch_num, total_batches
 
 
 def grade_local_cards(batch_size=20):
@@ -792,255 +769,6 @@ def display_grading_results(imperfect_cards, all_results):
         print("-" * 60)
 
 
-def discover_tasks():
-    """Discover all available task modules in the tasks/ directory."""
-    tasks_dir = Path(__file__).parent / "tasks"
-    if not tasks_dir.exists():
-        return []
-
-    task_files = [f.stem for f in tasks_dir.glob("*.py")
-                  if f.stem != "__init__" and not f.stem.startswith("_")]
-    return sorted(task_files)
-
-
-def load_task(task_name):
-    """Load a task module dynamically."""
-    return importlib.import_module(f"tasks.{task_name}")
-
-
-def call_llm_for_task(task_module, cards_batch):
-    """Call LLM with task prompt and cards batch."""
-    if not OPENROUTER_API_KEY:
-        raise ValueError("OPENROUTER_API_KEY not found in .env file")
-
-    task_type = getattr(task_module, "TYPE", "read_only")
-
-    # Build prompt from task's docstring
-    prompt = task_module.__doc__.strip() + "\n\nCards to process:\n"
-
-    for i, card in enumerate(cards_batch, 1):
-        question, answer = parse_card(card['content'])
-        prompt += f"\n{i}. Card ID: {card['id']}\n"
-        prompt += f"   Question: {question}\n"
-        prompt += f"   Answer: {answer}\n"
-
-    # For mutation tasks, add JSON format instruction
-    if task_type == "mutate":
-        prompt += "\n\nReturn results as JSON array with format:\n"
-        prompt += '[{"card_id": "...", "new_value": "..."}]'
-
-    # Call OpenRouter API
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": "google/gemini-2.5-flash",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
-    # Request JSON format for structured output
-    if task_type in ("mutate", "read_only"):
-        data["response_format"] = {"type": "json_object"}
-
-    response = requests.post(
-        OPENROUTER_URL,
-        headers=headers,
-        json=data,
-        timeout=60
-    )
-    response.raise_for_status()
-
-    result = response.json()
-    return result["choices"][0]["message"]["content"]
-
-
-def display_diff(original_content, new_content, card_id):
-    """Display a simple before/after diff."""
-    print(f"\n{'=' * 60}")
-    print(f"Card ID: {card_id}")
-    print(f"{'=' * 60}")
-
-    orig_q, orig_a = parse_card(original_content)
-    new_q, new_a = parse_card(new_content)
-
-    print("\n[BEFORE]")
-    print(f"Q: {orig_q[:100]}..." if len(orig_q) > 100 else f"Q: {orig_q}")
-    print(f"A: {orig_a[:150]}..." if len(orig_a) > 150 else f"A: {orig_a}")
-
-    print("\n[AFTER]")
-    print(f"Q: {new_q[:100]}..." if len(new_q) > 100 else f"Q: {new_q}")
-    print(f"A: {new_a[:150]}..." if len(new_a) > 150 else f"A: {new_a}")
-    print(f"{'-' * 60}")
-
-
-def confirm_mutation(prompt_text="Apply this change?"):
-    """Prompt user for confirmation."""
-    while True:
-        response = input(f"\n{prompt_text} [y/n/q]: ").lower().strip()
-        if response in ('y', 'yes'):
-            return True
-        elif response in ('n', 'no'):
-            return False
-        elif response in ('q', 'quit'):
-            print("Aborting remaining changes.")
-            return None
-        print("Please enter 'y' (yes), 'n' (no), or 'q' (quit)")
-
-
-def execute_task(task_name, deck_id, apply=False):
-    """Execute a task on all cards in a deck.
-
-    Args:
-        task_name: Name of the task module to run
-        deck_id: Deck ID to process
-        apply: If True and task is mutation, apply changes after confirmation
-
-    Returns:
-        List of results
-    """
-    task_module = load_task(task_name)
-    task_type = getattr(task_module, "TYPE", "read_only")
-    batch_size = getattr(task_module, "BATCH_SIZE", 20)
-
-    print(f"\nTask: {task_name}")
-    print(f"Type: {task_type}")
-    print(f"Batch size: {batch_size}\n")
-    print("Fetching cards...")
-
-    all_results = []
-
-    for batch, batch_num, total_batches in batched_cards(deck_id, batch_size):
-        print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} cards)...", flush=True)
-
-        # Call LLM with task prompt
-        llm_response = call_llm_for_task(task_module, batch)
-
-        # Parse response - both task types now expect JSON
-        data = json.loads(llm_response)
-        if isinstance(data, dict):
-            # Extract array from dict wrapper
-            data = next((v for v in data.values() if isinstance(v, list)), [])
-
-        for item in data:
-            card_id = item["card_id"]
-            card = next(c for c in batch if c["id"] == card_id)
-            if task_type == "mutate":
-                # For mutations, extract new_value directly
-                new_value = item["new_value"]
-                all_results.append((card, new_value))
-            else:
-                # For read-only, use task's parser
-                parsed = task_module.parse_llm_response(json.dumps(item), card)
-                all_results.append((card, parsed))
-
-    # Display results
-    if task_type == "read_only":
-        display_readonly_results(all_results)
-    else:
-        display_mutation_results(all_results, apply, task_module)
-
-    return all_results
-
-
-def display_readonly_results(results):
-    """Display results from read-only tasks in a table."""
-    if not results:
-        print("\nNo results to display.")
-        return
-
-    # Filter out perfect scores (score == 10) if this is a scoring task
-    filtered_results = []
-    perfect_count = 0
-
-    for card, result in results:
-        if isinstance(result, dict) and "score" in result:
-            if result["score"] < 10:
-                filtered_results.append((card, result))
-            else:
-                perfect_count += 1
-        else:
-            filtered_results.append((card, result))
-
-    total_count = len(results)
-
-    print(f"\n{'=' * 60}")
-    print("RESULTS")
-    print(f"{'=' * 60}\n")
-
-    if perfect_count > 0:
-        print(f"Total: {total_count} | Perfect (10/10): {perfect_count} | Need review: {len(filtered_results)}\n")
-
-    if not filtered_results:
-        print("🎉 All cards are perfect!")
-        return
-
-    for card, result in filtered_results:
-        question, _ = parse_card(card['content'])
-        q_short = question[:80] + '...' if len(question) > 80 else question
-
-        print(f"Card ID: {card['id']}")
-        print(f"Q: {q_short}")
-
-        if isinstance(result, dict):
-            for key, value in result.items():
-                if key != "card_id":
-                    print(f"  {key}: {value}")
-        else:
-            print(f"  Result: {result}")
-
-        print(f"{'-' * 60}")
-
-
-def display_mutation_results(results, apply, task_module):
-    """Display and optionally apply mutation results."""
-    if not results:
-        print("\nNo mutations to display.")
-        return
-
-    print(f"\n{'=' * 60}")
-    print(f"PROPOSED CHANGES ({len(results)} cards)")
-    print(f"{'=' * 60}")
-
-    if not apply:
-        print("\nDry-run mode: Changes will NOT be applied.")
-        print("Run with --apply to apply changes interactively.\n")
-
-        for card, new_value in results:
-            updated_card = task_module.apply_mutation(card, new_value)
-            display_diff(card['content'], updated_card['content'], card['id'])
-
-        return
-
-    # Interactive mode: show each change and ask for confirmation
-    print("\nInteractive mode: Review each change")
-    print("Commands: y=apply, n=skip, q=quit\n")
-
-    applied_count = 0
-    skipped_count = 0
-
-    for card, new_value in results:
-        updated_card = task_module.apply_mutation(card, new_value)
-        display_diff(card['content'], updated_card['content'], card['id'])
-
-        decision = confirm_mutation()
-
-        if decision is None:  # User quit
-            break
-        elif decision:  # User approved
-            update_card(card['id'], content=updated_card['content'])
-            print("✓ Applied")
-            applied_count += 1
-        else:  # User rejected
-            print("Skipped")
-            skipped_count += 1
-
-    print(f"\n{'=' * 60}")
-    print(f"Applied: {applied_count} | Skipped: {skipped_count}")
-    print(f"{'=' * 60}")
-
-
 def find_deck(decks, deck_name=None, deck_id=None):
     """Find a deck by name or ID (partial match supported)."""
     if deck_id:
@@ -1072,17 +800,6 @@ def parse_args():
     grade_parser.add_argument("--batch-size", type=int, default=20,
                              help="Cards per batch (default: 20)")
 
-    # Task command with subcommands
-    task_parser = subparsers.add_parser("task", help="Run LLM tasks on cards")
-    task_subparsers = task_parser.add_subparsers(dest="task_subcommand", help="Task subcommand")
-
-    _ = task_subparsers.add_parser("list", help="List all available tasks")
-
-    task_run_parser = task_subparsers.add_parser("run", help="Run a specific task")
-    task_run_parser.add_argument("task_name", help="Name of the task to run")
-    task_run_parser.add_argument("--apply", action="store_true",
-                                help="Apply mutations interactively (for mutation tasks)")
-
     return parser.parse_args()
 
 
@@ -1090,24 +807,6 @@ def main():
     args = parse_args()
 
     # Handle commands that don't require DECK_ID
-
-    # List available tasks
-    if args.command == "task" and args.task_subcommand == "list":
-        tasks = discover_tasks()
-        if not tasks:
-            print("No tasks found in tasks/ directory")
-            return
-
-        print(f"\nAvailable tasks ({len(tasks)}):\n" + "=" * 60)
-        for task_name in tasks:
-            task_module = load_task(task_name)
-            task_type = getattr(task_module, "TYPE", "read_only")
-            doc_first_line = task_module.__doc__.strip().split('\n')[0]
-            print(f"\n{task_name}")
-            print(f"  Type: {task_type}")
-            print(f"  Description: {doc_first_line}")
-            print("-" * 60)
-        return
 
     # List all decks (requires only API_KEY, not DECK_ID)
     if args.command == "decks":
@@ -1146,8 +845,6 @@ def main():
     elif args.command == "grade":
         imperfect_cards, all_results = grade_local_cards(batch_size=args.batch_size)
         display_grading_results(imperfect_cards, all_results)
-    elif args.command == "task" and args.task_subcommand == "run":
-        execute_task(args.task_name, DECK_ID, apply=args.apply)
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
         print("\nQuick start:")

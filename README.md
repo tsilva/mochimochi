@@ -1,16 +1,14 @@
 # mochi-mochi
 
-A Python tool for managing and grading Mochi flashcards via the Mochi API. This script provides functionality to list, create, update, delete, and automatically grade flashcards using AI-powered evaluation.
+A Python CLI tool for managing Mochi flashcards via the Mochi API with a local-first sync workflow. Edit your flashcards in markdown, grade them with AI, and sync changes to Mochi.
 
 ## Features
 
-- 📚 **List Cards**: Fetch and display all cards from your Mochi decks
-- ➕ **Create Cards**: Programmatically create new flashcards
-- ✏️ **Update Cards**: Modify existing card content
-- 🗑️ **Delete Cards**: Remove cards via API
+- 🔄 **Sync Workflow**: Pull cards to local markdown, edit, and push changes back
+- 📝 **Local Editing**: Work with flashcards in `mochi_cards.md` with full version control support
 - 🤖 **AI Grading**: Automatically grade flashcards using OpenRouter's Gemini 2.5 Flash LLM
-- 📝 **Export to Markdown**: Export all cards to a markdown file for backup or review
-- 📤 **Upload from Markdown**: Import cards from markdown files (supports both create and update)
+- 🔍 **Duplicate Detection**: Prevent duplicate cards when pushing to remote
+- 📋 **Status Tracking**: See local changes before pushing
 - 🧪 **Test Suite**: Comprehensive pytest-based test suite with unit and integration tests
 
 ## Installation
@@ -61,14 +59,22 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 ### Getting Configuration Values
 
 - **Mochi API Key**: Obtain from your Mochi account settings
-- **Deck ID**: You can find your deck ID in the Mochi web app URL when viewing a deck (e.g., `https://app.mochi.cards/decks/abc123` - the ID is `abc123`)
+- **Deck ID**: Run `python main.py decks` to list all your decks with their IDs
 - **OpenRouter API Key**: Sign up at [OpenRouter](https://openrouter.ai/) to get an API key
 
 ## Usage
 
+### Sync-Based Workflow
+
+The tool operates on a **local-first sync model**:
+
+1. **Pull** cards from remote to `mochi_cards.md`
+2. **Edit** locally (manually or via `grade` command)
+3. **Push** changes back to Mochi
+
 ### Command Line Interface
 
-The script can be run directly or via the installed `mochi-cards` command. All commands operate on the deck specified in your `.env` file.
+All commands can be run directly or via the installed `mochi-cards` command.
 
 #### List available decks (to find deck ID)
 ```bash
@@ -79,37 +85,46 @@ mochi-cards decks
 
 This command only requires `MOCHI_API_KEY` and displays all your decks with their IDs.
 
-#### List all cards
+#### Pull cards from remote
 ```bash
-python main.py list
+python main.py pull
 # or
-mochi-cards list
+mochi-cards pull
 ```
 
-#### Grade all cards using LLM (shows cards with score < 10)
+Downloads all cards from the deck specified in your `.env` file to `mochi_cards.md`.
+
+#### Show local changes
 ```bash
-python main.py grade
+python main.py status
 # or
-mochi-cards grade
+mochi-cards status
 ```
 
-#### Export cards to markdown
+Shows what cards have been added, modified, or deleted locally since the last sync.
+
+#### Push changes to remote
 ```bash
-python main.py dump --output cards.md
+python main.py push
 # or
-mochi-cards dump --output cards.md
+mochi-cards push
 ```
 
-If no output file is specified, defaults to `mochi_cards.md`.
+Uploads local changes to Mochi. Includes duplicate detection to prevent creating duplicate cards.
 
-#### Upload cards from markdown
+To skip duplicate detection:
 ```bash
-python main.py upload --input cards.md
-# or
-mochi-cards upload --input cards.md
+python main.py push --force
 ```
 
-Cards with valid `card_id` in frontmatter will be updated; cards with `card_id: null` will be created as new cards.
+#### Grade cards with AI
+```bash
+python main.py grade --batch-size 20
+# or
+mochi-cards grade --batch-size 20
+```
+
+Grades all cards in your local `mochi_cards.md` file using AI. Shows only cards scoring less than 10/10.
 
 ### Python API
 
@@ -122,38 +137,76 @@ from main import (
     create_card,
     update_card,
     delete_card,
-    grade_all_cards,
-    dump_cards_to_markdown,
-    upload_cards_from_markdown
+    pull,
+    push,
+    status,
+    grade_local_cards
 )
 
 # Get all decks
 decks = get_decks()
 
-# Get cards from a specific deck
+# Pull cards to local file
+pull(deck_id)
+
+# Push changes to remote
+push(deck_id)
+
+# Check status
+status()
+
+# Grade local cards
+imperfect_cards, all_results = grade_local_cards(batch_size=20)
+
+# Direct API operations
 cards = get_cards(deck_id)
-
-# Create a new card
-card = create_card(
-    deck_id,
-    content="What is Python?\n---\nPython is a high-level programming language."
-)
-
-# Update a card
-update_card(card['id'], content="Updated content here")
-
-# Delete a card
+card = create_card(deck_id, content="What is Python?\n---\nA programming language.")
+update_card(card['id'], content="Updated content\n---\nUpdated answer")
 delete_card(card['id'])
-
-# Grade all cards in a deck
-imperfect_cards, all_results = grade_all_cards(deck_id)
-
-# Export cards to markdown
-dump_cards_to_markdown(deck_id, "my_cards.md")
-
-# Upload cards from markdown
-created_ids, updated_ids = upload_cards_from_markdown(deck_id, "my_cards.md")
 ```
+
+## Card Format
+
+### Internal API Format
+
+Cards use markdown with `---` separator:
+```
+Question text
+---
+Answer text
+```
+
+### Local File Format (`mochi_cards.md`)
+
+Cards are stored with frontmatter for metadata:
+
+```markdown
+---
+card_id: abc123
+tags: ["python", "basics"]
+archived: false
+---
+Question text
+---
+Answer text
+---
+card_id: null
+---
+New question
+---
+New answer
+```
+
+**Frontmatter Fields:**
+- `card_id`: Mochi card ID (or `null` for new cards)
+- `tags`: JSON array of tags (optional)
+- `archived`: Boolean flag for archived cards (optional, only included if `true`)
+
+**Sync Behavior:**
+- Cards with valid IDs → updated on `push`
+- Cards with `card_id: null` → created as new cards on `push`
+- Cards removed from file → deleted on `push`
+- Duplicate detection uses content hash (question + answer)
 
 ## API Functions
 
@@ -177,24 +230,16 @@ Creates a new flashcard.
 **Parameters:**
 - `deck_id` (str): Deck ID to add the card to
 - `content` (str): Markdown content of the card (format: "Question\n---\nAnswer")
-- `**kwargs`: Optional fields like `template-id`, `review-reverse?`, `pos`, `manual-tags`, `fields`
+- `**kwargs`: Optional fields like `tags`, `archived`
 
 **Returns:** Created card data
-
-**Example:**
-```python
-card = create_card(
-    deck_id,
-    "What is recursion?\n---\nA programming technique where a function calls itself."
-)
-```
 
 ### `update_card(card_id, **kwargs)`
 Updates an existing card.
 
 **Parameters:**
 - `card_id` (str): ID of the card to update
-- `**kwargs`: Fields to update (e.g., `content`, `deck-id`, `archived?`, `trashed?`)
+- `**kwargs`: Fields to update (e.g., `content`, `tags`, `archived`)
 
 **Returns:** Updated card data
 
@@ -206,115 +251,35 @@ Deletes a card.
 
 **Returns:** `True` if successful
 
-### `grade_all_cards(deck_id, batch_size=20)`
-Grades all cards in a deck using AI, batching requests to minimize API calls.
+### `pull(deck_id)`
+Pull cards from remote and merge with local changes using three-way merge.
 
 **Parameters:**
-- `deck_id` (str): Deck ID to grade cards from
+- `deck_id` (str): Deck ID to pull from
+
+### `push(deck_id, force=False)`
+Push local changes to remote with duplicate detection.
+
+**Parameters:**
+- `deck_id` (str): Deck ID to push to
+- `force` (bool): If True, skip duplicate warnings
+
+### `status()`
+Show diff between local and last sync state.
+
+### `grade_local_cards(batch_size=20)`
+Grade cards from local file using AI.
+
+**Parameters:**
 - `batch_size` (int): Number of cards per API request (default: 20)
 
 **Returns:** Tuple of `(imperfect_cards, all_results)`
-- `imperfect_cards`: List of tuples `(card, score, justification)` for cards scoring < 10
-- `all_results`: List of all grading results
 
 **Grading Scale:**
 - 10: Perfect answer, completely accurate
 - 7-9: Mostly correct with minor issues
 - 4-6: Partially correct but missing key information
 - 0-3: Incorrect or severely incomplete
-
-### `dump_cards_to_markdown(deck_id, output_file="mochi_cards.md")`
-Exports all cards from a deck to a markdown file in compact format.
-
-**Parameters:**
-- `deck_id` (str): Deck ID to export cards from
-- `output_file` (str): Output markdown file path (default: "mochi_cards.md")
-
-**Returns:** Number of cards exported
-
-**Format:** Cards are exported with `card_id` in frontmatter, all sections separated by `---`
-
-### `upload_cards_from_markdown(deck_id, input_file)`
-Imports cards from a markdown file. Cards with `card_id` frontmatter will be updated; cards without will be created.
-
-**Parameters:**
-- `deck_id` (str): Deck ID to add cards to
-- `input_file` (str): Path to markdown file
-
-**Returns:** Tuple of `(created_ids, updated_ids)`
-- `created_ids`: List of IDs for newly created cards
-- `updated_ids`: List of IDs for updated cards
-
-**Example workflow:**
-```python
-# Export cards to markdown
-dump_cards_to_markdown(deck_id, "cards.md")
-
-# Edit the file (fix typos, improve answers, add new cards)
-# Then re-import - existing cards are updated, new ones are created
-created_ids, updated_ids = upload_cards_from_markdown(deck_id, "cards.md")
-print(f"Created {len(created_ids)} cards, updated {len(updated_ids)} cards")
-```
-
-## Card Format
-
-### Internal Format (API)
-Cards in the Mochi API use markdown content separated by `---`:
-
-```
-Question text here
----
-Answer text here
-```
-
-**Example:**
-```
-What is the time complexity of binary search?
----
-O(log n) - logarithmic time complexity
-```
-
-### Markdown Export/Import Format
-Exported markdown files use a compact format with `---` separators:
-
-```markdown
----
-card_id: abc123xyz
----
-What is the time complexity of binary search?
----
-O(log n) - logarithmic time complexity
----
-card_id: def456ghi
----
-What is a hash table?
----
-A data structure that maps keys to values using a hash function.
-```
-
-**Format:**
-- `---` separates all sections
-- Every card has frontmatter with `card_id:`
-- Exported cards have their actual card IDs
-- To add new cards manually, use `card_id: null`
-- Cards with valid IDs will be **updated** when uploaded
-- Cards with `card_id: null` will be **created** as new cards
-
-**Example with mixed create/update:**
-```markdown
----
-card_id: existing_id
----
-Updated question?
----
-Updated answer
----
-card_id: null
----
-New question without ID?
----
-New answer (will be created)
-```
 
 ## Development & Testing
 
@@ -334,27 +299,30 @@ TEST_DECK_ID=your_deck_id pytest
 
 # Run with verbose output
 pytest -v
-```
 
-See [TESTING.md](TESTING.md) for detailed testing documentation.
+# Run with coverage
+pytest --cov=main --cov-report=term-missing
+```
 
 ### Test Coverage
 
-- **17 unit tests** - Mocked tests for utilities, parsing, and CLI
-- **3 integration tests** - Live API tests (require `TEST_DECK_ID` environment variable)
+- **Unit tests** - Mocked tests for utilities, parsing, and CLI
+- **Integration tests** - Live API tests (require `TEST_DECK_ID` environment variable)
 
 Unit tests cover:
 - Card parsing (question/answer separation)
-- Deck finding utilities (legacy support)
-- LLM grading response parsing
-- Markdown export/import
+- Deck finding utilities
+- Markdown parsing and formatting
 - CLI argument parsing
 
 ## Notes
 
-- All operations work on the single deck specified by `DECK_ID` in your `.env` file.
-- The grading feature uses OpenRouter's Gemini 2.5 Flash model for evaluation.
-- Card fetching handles pagination automatically, but there's a known API pagination bug that may cause premature termination with a 500 error after retrieving many cards. The script handles this gracefully.
+- All operations work on the single deck specified by `DECK_ID` in your `.env` file
+- The grading feature uses OpenRouter's Gemini 2.5 Flash model for evaluation
+- Local file (`mochi_cards.md`) can be edited manually or committed to git
+- The `.mochi_sync/` directory tracks sync state (automatically added to `.gitignore`)
+- Three-way merge ensures local and remote changes merge correctly
+- Card fetching handles pagination automatically
 
 ## License
 

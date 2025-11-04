@@ -32,7 +32,7 @@ python main.py push                          # Push local changes to remote
 python main.py push --force                  # Push without duplicate detection
 ```
 
-**Local Operations** (work on `mochi_cards.md`):
+**Local Operations**:
 ```bash
 python main.py grade --batch-size 20         # Grade cards in local file using LLM
 ```
@@ -99,7 +99,7 @@ The tool now operates on a **local-first sync model**:
 2. **Sync State**: `.mochi_sync/` directory tracks sync state
    - `last_sync.md` - snapshot from last successful sync (enables three-way merge)
    - `deleted.txt` - tracks deletions for proper sync
-3. **Workflow**: `pull` → edit locally (manual or via tasks) → `push`
+3. **Workflow**: `pull` → edit locally (manual or via `grade`) → `push`
 
 **Benefits**:
 - Easy backup/restore (just copy `mochi_cards.md`)
@@ -191,7 +191,7 @@ New answer
 ### Single Deck Model
 The CLI operates on a single deck specified by `DECK_ID` in `.env`. The workflow is:
 1. `pull` to download the deck to `mochi_cards.md`
-2. Edit locally (manually or via `grade`, tasks, etc.)
+2. Edit locally (manually or via `grade`)
 3. `push` to upload changes back to Mochi
 
 ### Testing Architecture
