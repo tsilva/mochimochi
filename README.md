@@ -80,8 +80,6 @@ That's it! 🎉
 
 ## 📦 Installation
 
-### Option 1: Using `uv` (Recommended)
-
 ```bash
 # Install
 uv tool install git+https://github.com/tsilva/mochi-mochi.git
@@ -91,18 +89,6 @@ uv tool upgrade mochi-mochi
 
 # Uninstall
 uv tool uninstall mochi-mochi
-```
-
-### Option 2: Using `pip`
-
-```bash
-# From GitHub
-pip install git+https://github.com/tsilva/mochi-mochi.git
-
-# From local clone
-git clone <repository-url>
-cd mochi-mochi
-pip install -e .
 ```
 
 **Requirements:** Python 3.8+ • `requests>=2.25.0`
@@ -283,142 +269,8 @@ A key-value data structure in Python
 
 ---
 
-## 🛠️ Python API Reference
 
-<details>
-<summary>Click to expand API documentation</summary>
 
-### Deck Operations
-
-#### `get_decks()`
-Fetch all your decks.
-
-**Returns:** List of deck objects
-
-#### `pull(deck_id)`
-Download a deck to `<deck-name>-<deck_id>.md`.
-
-**Parameters:**
-- `deck_id` (str): Deck ID from Mochi
-
----
-
-### Card Operations
-
-#### `get_cards(deck_id, limit=100)`
-Fetch all cards from a deck (auto-paginated).
-
-**Parameters:**
-- `deck_id` (str): Target deck ID
-- `limit` (int): Cards per API request (default: 100)
-
-**Returns:** List of card objects
-
-#### `create_card(deck_id, content, **kwargs)`
-Create a new flashcard.
-
-**Parameters:**
-- `deck_id` (str): Target deck
-- `content` (str): Card content (`"Question\n---\nAnswer"`)
-- `**kwargs`: Optional fields (`tags`, `archived`)
-
-#### `update_card(card_id, **kwargs)`
-Update an existing card.
-
-**Parameters:**
-- `card_id` (str): Card to update
-- `**kwargs`: Fields to change (`content`, `tags`, `archived`)
-
-#### `delete_card(card_id)`
-Delete a card permanently.
-
-**Parameters:**
-- `card_id` (str): Card to delete
-
----
-
-### Sync Operations
-
-#### `push(file_path, force=False)`
-Upload local changes to Mochi.
-
-**Parameters:**
-- `file_path` (str): Deck file path (e.g., `"python-abc123.md"`)
-- `force` (bool): Skip duplicate detection if `True`
-
-</details>
-
----
-
-## 🧪 Development & Testing
-
-Want to contribute? Here's how to get started:
-
-```bash
-# Clone and install with dev dependencies
-git clone <repository-url>
-cd mochi-mochi
-uv sync --extra dev
-
-# Run unit tests (fast, no API needed)
-pytest -m "not integration"
-
-# Run all tests (requires TEST_DECK_ID environment variable)
-TEST_DECK_ID=your_deck_id pytest
-
-# Check coverage
-pytest --cov=main --cov-report=term-missing
-```
-
-**Test Coverage Includes:**
-- ✅ Card parsing logic
-- ✅ Deck finding utilities
-- ✅ Markdown formatting
-- ✅ CLI argument parsing
-- ✅ Live API integration tests
-
----
-
-## 💡 Tips & Tricks
-
-### Version Control Your Learning
-
-```bash
-# Track your learning journey
-git log python-basics-abc123.md
-
-# See what you added last week
-git diff HEAD~7 python-basics-abc123.md
-
-# Undo mistakes
-git checkout HEAD~1 python-basics-abc123.md
-```
-
-### Batch Operations
-
-```bash
-# Find all cards about "async"
-grep -n "async" python-advanced-abc123.md
-
-# Count total cards
-grep -c "^card_id:" python-advanced-abc123.md
-
-# Back up before big changes
-cp python-abc123.md python-abc123.md.backup
-```
-
----
-
-## 📋 Key Concepts
-
-- 🏠 **Local-first**: Your `.md` files are the source of truth
-- 🔄 **One-way sync**: Local → Mochi (not bidirectional)
-- 📁 **One file per deck**: Named `<deck-name>-<deck_id>.md`
-- 🆔 **Deck ID in filename**: Extracted automatically for sync
-- 🔍 **Smart duplicate detection**: Content hashes prevent copies
-- 📦 **Works offline**: Edit locally, push when ready
-
----
 
 ## 📄 License
 
@@ -428,7 +280,7 @@ See [LICENSE](LICENSE) file for details.
 
 ## 👤 Author
 
-Created with ❤️ by **tsilva**
+Prompted by **tsilva** ⚡ Assembled by LLM agents 😮‍💨
 
 ---
 
