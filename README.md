@@ -4,7 +4,7 @@
 
 <img src="logo.png" alt="mochi-mochi logo" width="200">
 
-**CLI tool for curating [Mochi Cards](https://mochi.cards/) flashcard decks**
+**CLI tool for curating [Mochi](https://mochi.cards/) flashcard decks**
 
 Curate high-quality flashcards with local-first workflow: edit in markdown, find duplicates with AI, track changes with git. Your local files are the source of truth.
 
