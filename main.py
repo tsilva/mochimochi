@@ -757,10 +757,10 @@ Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing
 
     try:
         response = client.chat.completions.create(
-            model="openai/gpt-4o-mini",  # Fast and cheap via OpenRouter
+            model="google/gemini-2.5-flash", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            max_tokens=150
+            max_tokens=1024
         )
 
         result = response.choices[0].message.content.strip()
