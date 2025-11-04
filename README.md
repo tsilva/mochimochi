@@ -1,5 +1,7 @@
 # 🍡 mochi-mochi
 
+<img src="logo.png" alt="mochi-mochi logo" width="200">
+
 **Unofficial CLI tool for local-first [Mochi Cards](https://mochi.cards/) sync**
 
 Edit flashcards in markdown, track with git, sync to Mochi. Your local files are the source of truth.
@@ -116,6 +118,12 @@ A key-value data structure
 ## 📄 License
 
 MIT - see [LICENSE](LICENSE) file
+
+---
+
+## 👤 Author
+
+Prompted by **tsilva** ⚡ Assembled by LLM agents 😮‍💨
 
 ---
 
