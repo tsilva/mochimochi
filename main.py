@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Mochi flashcard management CLI with sync-based workflow.
+"""Mochi flashcard management CLI with local-first multi-deck workflow.
 
 Workflow:
-    1. python main.py pull              # Download deck to mochi_cards.md
-    2. Edit mochi_cards.md manually or use: python main.py grade
-    3. python main.py push              # Upload changes back to Mochi
+    1. python main.py decks                      # List available decks
+    2. python main.py pull <deck_id>             # Download to <name>-<deck_id>.md
+    3. Edit <name>-<deck_id>.md locally
+    4. python main.py push <name>-<deck_id>.md   # Upload changes back to Mochi
 
 API usage:
     from main import create_card, update_card, delete_card, pull, push

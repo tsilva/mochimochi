@@ -12,8 +12,7 @@ def mock_env():
     """Mock environment variables."""
     with patch.dict(os.environ, {
         'MOCHI_API_KEY': 'test_api_key',
-        'OPENROUTER_API_KEY': 'test_openrouter_key',
-        'DECK_ID': 'test_deck_id'
+        'OPENROUTER_API_KEY': 'test_openrouter_key'
     }):
         yield
 

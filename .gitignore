@@ -206,9 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Exported markdown files (mochi card dumps)
-mochi_cards.md
-*_cards.md
+# User deck files (each user has their own decks)
+# Pattern: <deck-name>-<deck_id>.md
+# Users should track these in separate repos
 
 .env
-.mochi_sync/

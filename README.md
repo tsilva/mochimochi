@@ -4,11 +4,11 @@ A Python CLI tool for managing Mochi flashcards via the Mochi API with a local-f
 
 ## Features
 
-- 🔄 **Sync Workflow**: Pull cards to local markdown, edit, and push changes back
-- 📝 **Local Editing**: Work with flashcards in `mochi_cards.md` with full version control support
+- 🔄 **Local-First Sync**: Pull decks to local markdown files, edit, and push changes back
+- 📝 **Multi-Deck Support**: Manage multiple decks as separate `<deck-name>-<deck_id>.md` files
 - 🤖 **AI Grading**: Automatically grade flashcards using OpenRouter's Gemini 2.5 Flash LLM
 - 🔍 **Duplicate Detection**: Prevent duplicate cards when pushing to remote
-- 📋 **Status Tracking**: See local changes before pushing
+- 📂 **Version Control**: Track all decks in git with simple file-based workflow
 - 🧪 **Test Suite**: Comprehensive pytest-based test suite with unit and integration tests
 
 ## Installation
@@ -41,90 +41,74 @@ After installation, the `mochi-cards` command will be available in your PATH.
 
 ## Configuration
 
-Create a `.env` file in the project root with your API keys and deck ID:
+Create a `.env` file in your working directory (or decks repository) with your API keys:
 
 ```env
 MOCHI_API_KEY=your_mochi_api_key_here
-DECK_ID=your_deck_id_here
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
 **Required:**
-- `MOCHI_API_KEY`: Your Mochi API key
-- `DECK_ID`: The ID of the deck you want to work with
+- `MOCHI_API_KEY`: Your Mochi API key (obtain from your Mochi account settings)
 
 **Optional:**
-- `OPENROUTER_API_KEY`: Only required if you want to use the AI grading feature
-
-### Getting Configuration Values
-
-- **Mochi API Key**: Obtain from your Mochi account settings
-- **Deck ID**: Run `python main.py decks` to list all your decks with their IDs
-- **OpenRouter API Key**: Sign up at [OpenRouter](https://openrouter.ai/) to get an API key
+- `OPENROUTER_API_KEY`: Only required for the AI grading feature (sign up at [OpenRouter](https://openrouter.ai/))
 
 ## Usage
 
-### Sync-Based Workflow
+### Local-First Workflow
 
-The tool operates on a **local-first sync model**:
+The tool operates on a **local-first multi-deck model**:
 
-1. **Pull** cards from remote to `mochi_cards.md`
-2. **Edit** locally (manually or via `grade` command)
-3. **Push** changes back to Mochi
+1. **List** available decks with `decks` command
+2. **Pull** a deck to `<deck-name>-<deck_id>.md`
+3. **Edit** locally (manually or via `grade` command)
+4. **Push** changes back to Mochi
 
 ### Command Line Interface
 
 All commands can be run directly or via the installed `mochi-cards` command.
 
-#### List available decks (to find deck ID)
+#### List available decks
 ```bash
 python main.py decks
 # or
 mochi-cards decks
 ```
 
-This command only requires `MOCHI_API_KEY` and displays all your decks with their IDs.
+Displays all your decks with their IDs.
 
-#### Pull cards from remote
+#### Pull deck from remote
 ```bash
-python main.py pull
+python main.py pull <deck_id>
 # or
-mochi-cards pull
+mochi-cards pull <deck_id>
 ```
 
-Downloads all cards from the deck specified in your `.env` file to `mochi_cards.md`.
-
-#### Show local changes
-```bash
-python main.py status
-# or
-mochi-cards status
-```
-
-Shows what cards have been added, modified, or deleted locally since the last sync.
+Downloads all cards from the specified deck to `<deck-name>-<deck_id>.md`.
 
 #### Push changes to remote
 ```bash
-python main.py push
+python main.py push <deck-file>.md
 # or
-mochi-cards push
+mochi-cards push <deck-file>.md
 ```
 
 Uploads local changes to Mochi. Includes duplicate detection to prevent creating duplicate cards.
 
 To skip duplicate detection:
 ```bash
-python main.py push --force
+python main.py push <deck-file>.md --force
 ```
 
 #### Grade cards with AI
 ```bash
-python main.py grade --batch-size 20
+python main.py grade <deck-file>.md --batch-size 20
 # or
-mochi-cards grade --batch-size 20
+mochi-cards grade <deck-file>.md --batch-size 20
 ```
 
-Grades all cards in your local `mochi_cards.md` file using AI. Shows only cards scoring less than 10/10.
+Grades all cards in the specified deck file using AI. Shows only cards scoring less than 10/10.
 
 ### Python API
 
@@ -139,24 +123,20 @@ from main import (
     delete_card,
     pull,
     push,
-    status,
     grade_local_cards
 )
 
 # Get all decks
 decks = get_decks()
 
-# Pull cards to local file
-pull(deck_id)
+# Pull deck to local file
+pull(deck_id)  # Creates <deck-name>-<deck_id>.md
 
-# Push changes to remote
-push(deck_id)
-
-# Check status
-status()
+# Push deck file to remote
+push("python-basics-abc123.md")
 
 # Grade local cards
-imperfect_cards, all_results = grade_local_cards(batch_size=20)
+imperfect_cards, all_results = grade_local_cards("python-basics-abc123.md", batch_size=20)
 
 # Direct API operations
 cards = get_cards(deck_id)
@@ -176,9 +156,9 @@ Question text
 Answer text
 ```
 
-### Local File Format (`mochi_cards.md`)
+### Local File Format
 
-Cards are stored with frontmatter for metadata:
+Deck files (`<deck-name>-<deck_id>.md`) store cards with frontmatter for metadata:
 
 ```markdown
 ---
@@ -252,25 +232,23 @@ Deletes a card.
 **Returns:** `True` if successful
 
 ### `pull(deck_id)`
-Pull cards from remote and merge with local changes using three-way merge.
+Download cards from Mochi to `<deck-name>-<deck_id>.md` file.
 
 **Parameters:**
 - `deck_id` (str): Deck ID to pull from
 
-### `push(deck_id, force=False)`
-Push local changes to remote with duplicate detection.
+### `push(file_path, force=False)`
+Push local deck file to Mochi with duplicate detection.
 
 **Parameters:**
-- `deck_id` (str): Deck ID to push to
-- `force` (bool): If True, skip duplicate warnings
+- `file_path` (str): Path to deck file (e.g., "python-abc123.md")
+- `force` (bool): If True, skip duplicate detection
 
-### `status()`
-Show diff between local and last sync state.
-
-### `grade_local_cards(batch_size=20)`
-Grade cards from local file using AI.
+### `grade_local_cards(file_path, batch_size=20)`
+Grade cards from local deck file using AI.
 
 **Parameters:**
+- `file_path` (str): Path to deck file to grade
 - `batch_size` (int): Number of cards per API request (default: 20)
 
 **Returns:** Tuple of `(imperfect_cards, all_results)`
@@ -317,12 +295,12 @@ Unit tests cover:
 
 ## Notes
 
-- All operations work on the single deck specified by `DECK_ID` in your `.env` file
+- Each deck is managed as a separate `<deck-name>-<deck_id>.md` file
+- Deck ID is extracted from filename for sync operations
 - The grading feature uses OpenRouter's Gemini 2.5 Flash model for evaluation
-- Local file (`mochi_cards.md`) can be edited manually or committed to git
-- The `.mochi_sync/` directory tracks sync state (automatically added to `.gitignore`)
-- Three-way merge ensures local and remote changes merge correctly
+- Local deck files can be edited manually and tracked in git
 - Card fetching handles pagination automatically
+- One-way sync: local files are source of truth, Mochi is sync target
 
 ## License
 
