@@ -22,6 +22,7 @@ import sys
 import requests
 from pathlib import Path
 from datetime import datetime
+from openai import OpenAI
 
 BASE_URL = "https://app.mochi.cards/api"
 
@@ -30,6 +31,7 @@ CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
 
 # Global API key (set in main())
 API_KEY = None
+OPENAI_API_KEY = None
 
 
 def load_user_config():
@@ -103,6 +105,45 @@ def get_api_key():
 
     # Prompt user for API key and save it
     return prompt_and_save_api_key()
+
+
+def get_openai_api_key():
+    """Get OpenAI API key from user config, prompting if not found.
+
+    Returns:
+        str: OpenAI API key
+    """
+    config = load_user_config()
+
+    if "OPENAI_API_KEY" in config:
+        return config["OPENAI_API_KEY"]
+
+    # Prompt user for API key
+    print("\nOpenAI API key not found.")
+    print("You can get your API key from: https://platform.openai.com/api-keys")
+    print()
+
+    api_key = input("Enter your OpenAI API key: ").strip()
+
+    if not api_key:
+        print("Error: API key cannot be empty")
+        sys.exit(1)
+
+    # Load existing config to preserve other values
+    config['OPENAI_API_KEY'] = api_key
+
+    # Save config
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_PATH, 'w') as f:
+            for key, value in config.items():
+                f.write(f"{key}={value}\n")
+        print(f"\n✓ OpenAI API key saved to {CONFIG_PATH}")
+    except Exception as e:
+        print(f"Warning: Failed to save config: {e}")
+        print("Continuing with current session...")
+
+    return api_key
 
 
 def parse_card(content):
@@ -553,6 +594,225 @@ def push(file_path, force=False):
     print(f"\n✓ Pushed changes: {created_count} created, {updated_count} updated, {deleted_count} deleted")
 
 
+def get_embedding(text, client):
+    """Generate embedding for text using OpenAI API.
+
+    Args:
+        text: Text to embed
+        client: OpenAI client instance
+
+    Returns:
+        List of floats representing the embedding vector
+    """
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return response.data[0].embedding
+
+
+def get_embeddings_batch(texts, client, batch_size=100):
+    """Generate embeddings for multiple texts using OpenAI API.
+
+    Args:
+        texts: List of texts to embed
+        client: OpenAI client instance
+        batch_size: Number of texts to process per API call (default: 100)
+
+    Returns:
+        List of embedding vectors (one per input text)
+    """
+    embeddings = []
+
+    # Process in batches to respect API limits
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=batch
+        )
+        # Extract embeddings in the same order as input
+        batch_embeddings = [item.embedding for item in response.data]
+        embeddings.extend(batch_embeddings)
+
+        # Progress indicator
+        print(f"  {min(i + batch_size, len(texts))}/{len(texts)} ", end='\r')
+
+    return embeddings
+
+
+def cosine_similarity(vec1, vec2):
+    """Calculate cosine similarity between two vectors.
+
+    Args:
+        vec1: First embedding vector
+        vec2: Second embedding vector
+
+    Returns:
+        Float between 0 and 1 representing similarity
+    """
+    import math
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    magnitude1 = math.sqrt(sum(a * a for a in vec1))
+    magnitude2 = math.sqrt(sum(b * b for b in vec2))
+    return dot_product / (magnitude1 * magnitude2)
+
+
+def find_duplicate_pairs(cards, threshold=0.85):
+    """Find pairs of similar cards using embeddings.
+
+    Args:
+        cards: List of card dicts with embeddings
+        threshold: Similarity threshold (0.0-1.0)
+
+    Returns:
+        List of tuples: (card1_idx, card2_idx, similarity_score)
+    """
+    pairs = []
+    n = len(cards)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            similarity = cosine_similarity(cards[i]['embedding'], cards[j]['embedding'])
+            if similarity >= threshold:
+                pairs.append((i, j, similarity))
+
+    # Sort by similarity descending
+    pairs.sort(key=lambda x: x[2], reverse=True)
+    return pairs
+
+
+def dedupe(file_path, threshold=0.85):
+    """Find and remove duplicate cards from deck file using semantic similarity.
+
+    Args:
+        file_path: Path to deck file (<deck-name>-<deck_id>.md)
+        threshold: Similarity threshold for duplicates (default: 0.85)
+    """
+    local_file = Path(file_path)
+
+    if not local_file.exists():
+        print(f"Error: {local_file} not found")
+        return
+
+    print(f"Loading cards from {local_file}...")
+    cards = parse_markdown_cards(local_file.read_text())
+
+    if len(cards) < 2:
+        print("Not enough cards to deduplicate (need at least 2)")
+        return
+
+    # Initialize OpenAI client
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    print(f"Generating embeddings for {len(cards)} cards...")
+    # Prepare all texts for batch processing
+    texts = [f"{card['question']}\n{card['answer']}" for card in cards]
+
+    # Get embeddings in batches (much faster than sequential)
+    embeddings = get_embeddings_batch(texts, client)
+
+    # Assign embeddings back to cards
+    for card, embedding in zip(cards, embeddings):
+        card['embedding'] = embedding
+
+    print(f"\n✓ Generated {len(cards)} embeddings")
+
+    print(f"\nFinding duplicate pairs (threshold: {threshold})...")
+    pairs = find_duplicate_pairs(cards, threshold)
+
+    if not pairs:
+        print("✓ No duplicates found!")
+        return
+
+    print(f"\nFound {len(pairs)} potential duplicate pair(s):\n")
+
+    # Interactive resolution
+    cards_to_remove = set()
+
+    for idx, (i, j, score) in enumerate(pairs, 1):
+        card1 = cards[i]
+        card2 = cards[j]
+
+        # Skip if either card is already marked for removal
+        if i in cards_to_remove or j in cards_to_remove:
+            continue
+
+        print("=" * 70)
+        print(f"Pair {idx}/{len(pairs)} - Similarity: {score:.3f}")
+        print("-" * 70)
+        print(f"\n[1] Card 1:")
+        print(f"    Q: {card1['question'][:100]}{'...' if len(card1['question']) > 100 else ''}")
+        print(f"    A: {card1['answer'][:100]}{'...' if len(card1['answer']) > 100 else ''}")
+        if card1['card_id']:
+            print(f"    ID: {card1['card_id']}")
+        print(f"\n[2] Card 2:")
+        print(f"    Q: {card2['question'][:100]}{'...' if len(card2['question']) > 100 else ''}")
+        print(f"    A: {card2['answer'][:100]}{'...' if len(card2['answer']) > 100 else ''}")
+        if card2['card_id']:
+            print(f"    ID: {card2['card_id']}")
+
+        print("\nOptions:")
+        print("  1 - Keep card 1, remove card 2")
+        print("  2 - Keep card 2, remove card 1")
+        print("  b - Keep both (not duplicates)")
+        print("  s - Skip to next pair")
+        print("  q - Quit without saving")
+
+        while True:
+            choice = input("\nYour choice [1/2/b/s/q]: ").strip().lower()
+
+            if choice == '1':
+                cards_to_remove.add(j)
+                print(f"  → Will remove card 2")
+                break
+            elif choice == '2':
+                cards_to_remove.add(i)
+                print(f"  → Will remove card 1")
+                break
+            elif choice == 'b':
+                print(f"  → Keeping both cards")
+                break
+            elif choice == 's':
+                print(f"  → Skipped")
+                break
+            elif choice == 'q':
+                print("\nAborted - no changes made")
+                return
+            else:
+                print("Invalid choice. Please enter 1, 2, b, s, or q")
+
+    if not cards_to_remove:
+        print("\n✓ No cards marked for removal")
+        return
+
+    # Show summary
+    print("\n" + "=" * 70)
+    print(f"\nSummary: Will remove {len(cards_to_remove)} card(s)")
+    print("-" * 70)
+    for idx in sorted(cards_to_remove):
+        card = cards[idx]
+        print(f"  - {card['question'][:60]}{'...' if len(card['question']) > 60 else ''}")
+
+    response = input("\nProceed with removal? [y/N]: ").lower().strip()
+    if response not in ('y', 'yes'):
+        print("Aborted")
+        return
+
+    # Remove duplicates and write back to file
+    cards_to_keep = [card for i, card in enumerate(cards) if i not in cards_to_remove]
+
+    with local_file.open('w', encoding='utf-8') as f:
+        for card in cards_to_keep:
+            # Remove embedding before writing (not needed in file)
+            card.pop('embedding', None)
+            f.write(format_card_to_markdown(card) + '\n')
+
+    print(f"\n✓ Removed {len(cards_to_remove)} duplicate(s)")
+    print(f"✓ {len(cards_to_keep)} cards remaining in {local_file}")
+    print(f"\nTip: Review changes with: git diff {local_file.name}")
+
+
 def find_deck(decks, deck_name=None, deck_id=None):
     """Find a deck by name or ID (partial match supported)."""
     if deck_id:
@@ -581,11 +841,16 @@ def parse_args():
     push_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
+    dedupe_parser = subparsers.add_parser("dedupe", help="Find and remove duplicate cards using semantic similarity")
+    dedupe_parser.add_argument("file_path", help="Path to deck file (e.g., python-abc123.md)")
+    dedupe_parser.add_argument("--threshold", type=float, default=0.85,
+                              help="Similarity threshold (0.0-1.0, default: 0.85)")
+
     return parser.parse_args()
 
 
 def main():
-    global API_KEY
+    global API_KEY, OPENAI_API_KEY
     args = parse_args()
 
     # Load API key from config (prompts for MOCHI_API_KEY if not found)
@@ -609,6 +874,11 @@ def main():
 
     elif args.command == "push":
         push(args.file_path, force=args.force)
+
+    elif args.command == "dedupe":
+        # Load OpenAI API key for dedupe command
+        OPENAI_API_KEY = get_openai_api_key()
+        dedupe(args.file_path, threshold=args.threshold)
 
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
