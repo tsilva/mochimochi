@@ -2,10 +2,10 @@
 """Mochi flashcard management CLI with local-first multi-deck workflow.
 
 Workflow:
-    1. python main.py decks                      # List available decks
-    2. python main.py pull <deck_id>             # Download to <name>-<deck_id>.md
+    1. mochi-mochi decks                      # List available decks
+    2. mochi-mochi pull <deck_id>             # Download to <name>-<deck_id>.md
     3. Edit <name>-<deck_id>.md locally
-    4. python main.py push <name>-<deck_id>.md   # Upload changes back to Mochi
+    4. mochi-mochi push <name>-<deck_id>.md   # Upload changes back to Mochi
 
 API usage:
     from main import create_card, update_card, delete_card, pull, push
@@ -21,16 +21,88 @@ import os
 import sys
 import requests
 from pathlib import Path
-from dotenv import load_dotenv
 from datetime import datetime
 
-# Load environment variables
-load_dotenv()
-API_KEY = os.getenv("MOCHI_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
 BASE_URL = "https://app.mochi.cards/api"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Config file location
+CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
+
+# Global API key (set in main())
+API_KEY = None
+
+
+def load_user_config():
+    """Load configuration from user config file at ~/.mochi-mochi/config.
+
+    Returns:
+        dict: Configuration dictionary with keys like 'MOCHI_API_KEY'
+    """
+    config = {}
+
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key.strip()] = value.strip()
+        except Exception as e:
+            print(f"Warning: Failed to load config from {CONFIG_PATH}: {e}")
+
+    return config
+
+
+def prompt_and_save_api_key():
+    """Prompt user for API key and save to config file.
+
+    Returns:
+        str: The API key entered by the user
+    """
+    print("\nMochi API key not found.")
+    print("You can get your API key from: https://app.mochi.cards/settings")
+    print()
+
+    api_key = input("Enter your Mochi API key: ").strip()
+
+    if not api_key:
+        print("Error: API key cannot be empty")
+        sys.exit(1)
+
+    # Create config directory if it doesn't exist
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing config to preserve other values
+    config = load_user_config()
+    config['MOCHI_API_KEY'] = api_key
+
+    # Save config
+    try:
+        with open(CONFIG_PATH, 'w') as f:
+            for key, value in config.items():
+                f.write(f"{key}={value}\n")
+        print(f"\n✓ API key saved to {CONFIG_PATH}")
+    except Exception as e:
+        print(f"Warning: Failed to save config: {e}")
+        print("Continuing with current session...")
+
+    return api_key
+
+
+def get_api_key():
+    """Get API key from user config, prompting if not found.
+
+    Returns:
+        str: API key
+    """
+    config = load_user_config()
+
+    if "MOCHI_API_KEY" in config:
+        return config["MOCHI_API_KEY"]
+
+    # Prompt user for API key and save it
+    return prompt_and_save_api_key()
 
 
 def parse_card(content):
@@ -250,139 +322,6 @@ def delete_card(card_id):
     )
     response.raise_for_status()
     return True
-
-
-def grade_cards_batch(cards_batch):
-    """Grade a batch of cards using OpenRouter's Gemini 2.5 Flash.
-
-    Args:
-        cards_batch: List of card objects to grade
-
-    Returns:
-        List of tuples: (card, score, justification)
-    """
-    if not OPENROUTER_API_KEY:
-        raise ValueError("OPENROUTER_API_KEY not found in .env file")
-
-    # Build the prompt with all cards
-    prompt = """You are grading flashcards for accuracy. For each card below, evaluate if the answer is correct and complete.
-
-Score each card from 0-10:
-- 10: Perfect answer, completely accurate
-- 7-9: Mostly correct with minor issues
-- 4-6: Partially correct but missing key information
-- 0-3: Incorrect or severely incomplete
-
-IMPORTANT: You must grade ALL cards below. Return a JSON array with one entry per card.
-
-Format your response as JSON array:
-[
-  {"card_id": "id1", "score": 10, "justification": "explanation"},
-  {"card_id": "id2", "score": 8, "justification": "explanation"}
-]
-
-Cards to grade:
-"""
-
-    for i, card in enumerate(cards_batch, 1):
-        question, answer = parse_card(card['content'])
-        prompt += f"\n{i}. Card ID: {card['id']}\n"
-        prompt += f"   Question: {question}\n"
-        prompt += f"   Answer: {answer}\n"
-
-    # Call OpenRouter API
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": "google/gemini-2.5-flash",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "response_format": {"type": "json_object"}
-    }
-
-    response = requests.post(
-        OPENROUTER_URL,
-        headers=headers,
-        json=data,
-        timeout=60
-    )
-    response.raise_for_status()
-
-    result = response.json()
-    content = result["choices"][0]["message"]["content"]
-
-    grades = json.loads(content)
-    if isinstance(grades, dict):
-        grades = next((v for v in grades.values() if isinstance(v, list)), [])
-
-    grade_map = {g['card_id']: (g['score'], g['justification']) for g in grades}
-
-    # Check for missing grades
-    missing_ids = [card['id'] for card in cards_batch if card['id'] not in grade_map]
-    if missing_ids:
-        print(f"\n⚠ Warning: LLM didn't return grades for {len(missing_ids)} card(s): {', '.join(missing_ids[:3])}")
-        if len(missing_ids) > 3:
-            print(f"   ... and {len(missing_ids) - 3} more")
-
-    # Only return results for cards that were graded
-    results = [(card, *grade_map[card['id']]) for card in cards_batch if card['id'] in grade_map]
-    return results
-
-
-def grade_local_cards(file_path, batch_size=20):
-    """Grade cards from local deck file.
-
-    Args:
-        file_path: Path to deck file to grade
-        batch_size: Number of cards per API request (default: 20)
-
-    Returns:
-        List of tuples: (card_dict, score, justification) for cards scoring < 10
-    """
-    local_file = Path(file_path)
-
-    if not local_file.exists():
-        print(f"Error: {local_file} not found")
-        return [], []
-
-    print(f"\nReading cards from {local_file}...")
-    local_cards = parse_markdown_cards(local_file.read_text())
-
-    if not local_cards:
-        print("No cards found in local file.")
-        return [], []
-
-    # Convert card dicts to API format for grading
-    api_format_cards = []
-    for card in local_cards:
-        content = f"{card['question']}\n---\n{card['answer']}"
-        api_format_cards.append({
-            'id': card.get('card_id', 'local-' + card['content_hash']),
-            'content': content
-        })
-
-    # Grade in batches
-    print(f"Grading {len(api_format_cards)} cards...")
-    all_results = []
-    total_batches = (len(api_format_cards) + batch_size - 1) // batch_size
-
-    for i in range(0, len(api_format_cards), batch_size):
-        batch = api_format_cards[i:i+batch_size]
-        batch_num = (i // batch_size) + 1
-        print(f"  Processing batch {batch_num}/{total_batches} ({len(batch)} cards)...", flush=True)
-        results = grade_cards_batch(batch)
-        all_results.extend(results)
-
-    # Filter cards with score < 10
-    imperfect_cards = [(card, score, justification)
-                       for card, score, justification in all_results
-                       if score < 10]
-
-    return imperfect_cards, all_results
 
 
 def get_cards(deck_id, limit=100):
@@ -614,30 +553,6 @@ def push(file_path, force=False):
     print(f"\n✓ Pushed changes: {created_count} created, {updated_count} updated, {deleted_count} deleted")
 
 
-def display_grading_results(imperfect_cards, all_results):
-    """Display grading results."""
-    sep = "=" * 60
-    print(f"\n{sep}\nGRADING RESULTS\n{sep}")
-
-    total, perfect = len(all_results), len(all_results) - len(imperfect_cards)
-    print(f"\nTotal: {total} | Perfect (10/10): {perfect} | Need review: {len(imperfect_cards)}")
-
-    if not imperfect_cards:
-        print("\n🎉 All cards are perfect!")
-        return
-
-    print(f"\n{sep}\nCARDS NEEDING REVIEW\n{sep}")
-    for i, (card, score, justification) in enumerate(sorted(imperfect_cards, key=lambda x: x[1]), 1):
-        question, answer = parse_card(card['content'])
-        q_trunc = question[:100] + '...' if len(question) > 100 else question
-        a_trunc = answer[:150] + '...' if len(answer) > 150 else answer
-        print(f"\n{i}. Score: {score}/10 | ID: {card['id']}")
-        print(f"   Q: {q_trunc}")
-        print(f"   A: {a_trunc}")
-        print(f"   Issue: {justification}")
-        print("-" * 60)
-
-
 def find_deck(decks, deck_name=None, deck_id=None):
     """Find a deck by name or ID (partial match supported)."""
     if deck_id:
@@ -666,24 +581,15 @@ def parse_args():
     push_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
-    # Local operations
-    grade_parser = subparsers.add_parser("grade", help="Grade cards in deck file using LLM")
-    grade_parser.add_argument("file_path", help="Path to deck file to grade")
-    grade_parser.add_argument("--batch-size", type=int, default=20,
-                             help="Cards per batch (default: 20)")
-
     return parser.parse_args()
 
 
 def main():
+    global API_KEY
     args = parse_args()
 
-    # Check API key for all commands
-    if not API_KEY:
-        print("Error: MOCHI_API_KEY not found in .env file")
-        print("\nCreate a .env file with:")
-        print("MOCHI_API_KEY=your_api_key_here")
-        sys.exit(1)
+    # Load API key from config (prompts for MOCHI_API_KEY if not found)
+    API_KEY = get_api_key()
 
     # Handle commands
     if args.command == "decks":
@@ -695,7 +601,7 @@ def main():
             print(f"  ID: {deck['id']}")
             print("-" * 60)
         print("\nTo pull a deck:")
-        print("  python main.py pull <deck_id>")
+        print("  mochi-mochi pull <deck_id>")
         return
 
     elif args.command == "pull":
@@ -704,20 +610,13 @@ def main():
     elif args.command == "push":
         push(args.file_path, force=args.force)
 
-    elif args.command == "grade":
-        imperfect_cards, all_results = grade_local_cards(
-            args.file_path,
-            batch_size=args.batch_size
-        )
-        display_grading_results(imperfect_cards, all_results)
-
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
         print("\nQuick start:")
-        print("  1. python main.py decks              # List decks")
-        print("  2. python main.py pull <deck_id>     # Download deck")
+        print("  1. mochi-mochi decks              # List decks")
+        print("  2. mochi-mochi pull <deck_id>     # Download deck")
         print("  3. Edit <deck-name>-<deck_id>.md")
-        print("  4. python main.py push <deck-name>-<deck_id>.md  # Upload changes")
+        print("  4. mochi-mochi push <deck-name>-<deck_id>.md  # Upload changes")
 
 
 if __name__ == "__main__":

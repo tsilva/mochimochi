@@ -11,8 +11,7 @@ import main
 def mock_env():
     """Mock environment variables."""
     with patch.dict(os.environ, {
-        'MOCHI_API_KEY': 'test_api_key',
-        'OPENROUTER_API_KEY': 'test_openrouter_key'
+        'MOCHI_API_KEY': 'test_api_key'
     }):
         yield
 
@@ -152,82 +151,8 @@ class TestCRUDOperations:
         assert isinstance(cards, list)
 
 
-class TestGrading:
-    """Test LLM grading functionality."""
-
-    @pytest.fixture
-    def mock_openrouter_response(self):
-        """Mock OpenRouter API response."""
-        return {
-            "choices": [{
-                "message": {
-                    "content": '[{"card_id": "card1", "score": 10, "justification": "Perfect"}]'
-                }
-            }]
-        }
-
-    def test_grade_cards_batch_mock(self, sample_cards, mock_openrouter_response, mock_env):
-        """Test grading with mocked API response."""
-        with patch('requests.post') as mock_post:
-            mock_post.return_value.json.return_value = mock_openrouter_response
-            mock_post.return_value.raise_for_status = Mock()
-
-            results = main.grade_cards_batch(sample_cards[:1])
-            assert len(results) == 1
-            assert results[0][1] == 10  # score
-            assert results[0][2] == "Perfect"  # justification
-
-    def test_grade_cards_batch_wrapped_response(self, sample_cards, mock_env):
-        """Test grading with wrapped JSON response."""
-        wrapped_response = {
-            "choices": [{
-                "message": {
-                    "content": '{"grades": [{"card_id": "card1", "score": 8, "justification": "Good"}]}'
-                }
-            }]
-        }
-
-        with patch('requests.post') as mock_post:
-            mock_post.return_value.json.return_value = wrapped_response
-            mock_post.return_value.raise_for_status = Mock()
-
-            results = main.grade_cards_batch(sample_cards[:1])
-            assert len(results) == 1
-            assert results[0][1] == 8
-
-    def test_grade_cards_batch_missing_grades(self, sample_cards, mock_env):
-        """Test grading when LLM doesn't return all grades."""
-        # LLM only returns grade for card1, not card2
-        partial_response = {
-            "choices": [{
-                "message": {
-                    "content": '[{"card_id": "card1", "score": 10, "justification": "Perfect"}]'
-                }
-            }]
-        }
-
-        with patch('requests.post') as mock_post, \
-             patch('builtins.print'):  # Suppress warning output
-            mock_post.return_value.json.return_value = partial_response
-            mock_post.return_value.raise_for_status = Mock()
-
-            results = main.grade_cards_batch(sample_cards)  # 2 cards
-            # Should only return result for card1
-            assert len(results) == 1
-            assert results[0][0]['id'] == 'card1'
-            assert results[0][1] == 10
-
-
 class TestCLI:
     """Test CLI argument parsing."""
-
-    def test_parse_args_grade_with_batch_size(self):
-        """Test grade command with batch size."""
-        with patch('sys.argv', ['main.py', 'grade', 'test-deck.md', '--batch-size', '10']):
-            args = main.parse_args()
-            assert args.command == 'grade'
-            assert args.file_path == 'test-deck.md'
-            assert args.batch_size == 10
 
     def test_parse_args_pull(self):
         """Test pull command parsing."""
