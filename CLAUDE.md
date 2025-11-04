@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **mochi-mochi** is a Python CLI tool for managing Mochi flashcards via the Mochi API. It provides CRUD operations and AI-powered grading using OpenRouter's Gemini 2.5 Flash model.
 
+**Architecture**: Simple local-first sync (~675 lines). Local markdown file is source of truth, Mochi is sync target.
+
 ## Documentation Philosophy
 
-**This is a small, focused CLI tool (< 400 lines).** Keep all documentation consolidated in README.md and this file. Do not create additional .md files (summaries, migration guides, completion reports, etc.) unless explicitly requested by the user. Over-documentation creates maintenance burden for small projects.
+**This is a small, focused CLI tool (~675 lines).** Keep all documentation consolidated in README.md and this file. Do not create additional .md files (summaries, migration guides, completion reports, etc.) unless explicitly requested by the user. Over-documentation creates maintenance burden for small projects.
 
 ## Development Commands
 
@@ -26,15 +28,16 @@ mochi-cards <command>
 
 **Core Sync Workflow**:
 ```bash
-python main.py pull                          # Pull cards from remote, merge with local
-python main.py status                        # Show local changes not yet pushed
-python main.py push                          # Push local changes to remote
+python main.py pull                          # Download from Mochi (initialization/reset)
+python main.py push                          # Push local changes to Mochi
 python main.py push --force                  # Push without duplicate detection
 ```
 
 **Local Operations**:
 ```bash
 python main.py grade --batch-size 20         # Grade cards in local file using LLM
+git status                                   # See what changed locally
+git diff mochi_cards.md                      # Review specific changes
 ```
 
 **Discovery** (doesn't require DECK_ID):
@@ -91,29 +94,26 @@ All operations work on the single deck specified by `DECK_ID`.
 All code is in `main.py` - a single Python module with no subdirectories or packages.
 Tests are in `test_main.py` using pytest framework.
 
-### Sync-Based Workflow (Local-First Model)
+### Local-First Workflow
 
-The tool now operates on a **local-first sync model**:
+The tool operates on a **local-first model** where your local `mochi_cards.md` is the source of truth:
 
-1. **Local Working Copy**: `mochi_cards.md` - your editable deck file
-2. **Sync State**: `.mochi_sync/` directory tracks sync state
-   - `last_sync.md` - snapshot from last successful sync (enables three-way merge)
-   - `deleted.txt` - tracks deletions for proper sync
-3. **Workflow**: `pull` → edit locally (manual or via `grade`) → `push`
+1. **Local Working Copy**: `mochi_cards.md` - your editable deck file (source of truth)
+2. **Version Control**: Use git in your own directory to track changes
+3. **Workflow**: `pull` (once) → edit locally → commit → `push` to sync
 
 **Benefits**:
-- Easy backup/restore (just copy `mochi_cards.md`)
-- Manual editing supported (edit markdown directly)
-- Version control friendly (track deck changes in git)
-- LLM operations work offline on local copy
+- Simple one-way sync: local → remote
+- No hidden state directories (`.mochi_sync/` removed)
+- Use git for version control and change tracking
 - Duplicate detection prevents card duplication
+- Works offline for local operations
 
-**Three-Way Merge**: When you `pull`, the tool compares:
-- Base state (last sync)
-- Local changes (your edits)
-- Remote changes (Mochi updates)
-
-This ensures local and remote changes merge correctly, with conflicts defaulting to local changes.
+**Key Commands**:
+- `pull`: Downloads from Mochi (initialization or reset)
+- `push`: Syncs local changes to Mochi (creates/updates/deletes to match local)
+- `git status/diff`: See what changed locally
+- `grade`: LLM-based card grading (works offline)
 
 ### Error Handling Philosophy
 **Fail fast.** The codebase intentionally avoids defensive error handling that swallows exceptions or provides defaults. Let exceptions propagate to the top rather than catching and continuing. This makes debugging easier and prevents silent failures.
@@ -121,9 +121,8 @@ This ensures local and remote changes merge correctly, with conflicts defaulting
 ### Core Functions
 
 **Sync Operations**:
-- **`pull(deck_id)`**: Pull cards from remote and merge with local using three-way merge
-- **`push(deck_id, force=False)`**: Push local changes to remote with duplicate detection
-- **`status()`**: Show diff between local and last sync state
+- **`pull(deck_id)`**: Download cards from Mochi to local file (initialization/reset)
+- **`push(deck_id, force=False)`**: One-way sync local → Mochi (create/update/delete to match local)
 
 **Utility Functions**:
 - **`parse_card(content)`**: Parse card content into (question, answer) tuple
@@ -188,11 +187,32 @@ New answer
 - Batches multiple cards per API call (default: 20) to minimize costs
 - Returns JSON-formatted grades with scores (0-10) and justifications
 
-### Single Deck Model
-The CLI operates on a single deck specified by `DECK_ID` in `.env`. The workflow is:
-1. `pull` to download the deck to `mochi_cards.md`
-2. Edit locally (manually or via `grade`)
-3. `push` to upload changes back to Mochi
+### Single Deck Model & User Workflow
+The CLI operates on a single deck specified by `DECK_ID` in `.env`.
+
+**Recommended Setup** (separate from tool repo):
+```bash
+# Create your own private cards directory
+mkdir ~/my-flashcards && cd ~/my-flashcards
+echo "MOCHI_API_KEY=..." > .env
+echo "DECK_ID=..." >> .env
+git init
+
+# Initialize from Mochi
+mochi-cards pull
+git add . && git commit -m "Initial cards"
+
+# Daily workflow
+vim mochi_cards.md                   # Edit cards
+git diff                             # Review changes
+git commit -am "Add Python questions"
+mochi-cards push                     # Sync to Mochi
+```
+
+**Why separate directory?**
+- Tool repo is public, your cards are private
+- You control version history with your own git repo
+- Easy backup/restore
 
 ### Testing Architecture
 - **Unit Tests**: Test utilities (parse_card, find_deck) and CLI parsing with mocks

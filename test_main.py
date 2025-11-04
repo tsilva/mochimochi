@@ -242,12 +242,6 @@ class TestCLI:
             assert args.command == 'push'
             assert args.force is True
 
-    def test_parse_args_status(self):
-        """Test status command parsing."""
-        with patch('sys.argv', ['main.py', 'status']):
-            args = main.parse_args()
-            assert args.command == 'status'
-
 
 class TestSyncFunctions:
     """Test sync-related utility functions."""

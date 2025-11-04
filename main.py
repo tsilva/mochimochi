@@ -32,10 +32,7 @@ DECK_ID = os.getenv("DECK_ID")
 BASE_URL = "https://app.mochi.cards/api"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Sync-related constants
-SYNC_DIR = Path(".mochi_sync")
-LAST_SYNC_FILE = SYNC_DIR / "last_sync.md"
-DELETED_FILE = SYNC_DIR / "deleted.txt"
+# Local file constant
 LOCAL_FILE = Path("mochi_cards.md")
 
 
@@ -49,33 +46,6 @@ def content_hash(question, answer):
     """Generate hash of card content for duplicate detection."""
     content = f"{question.strip()}\n---\n{answer.strip()}"
     return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
-
-
-def ensure_sync_dir():
-    """Create .mochi_sync directory if it doesn't exist."""
-    SYNC_DIR.mkdir(exist_ok=True)
-    # Add to .gitignore if not already there
-    gitignore = Path(".gitignore")
-    if gitignore.exists():
-        content = gitignore.read_text()
-        if ".mochi_sync/" not in content:
-            with gitignore.open("a") as f:
-                f.write("\n.mochi_sync/\n")
-    else:
-        gitignore.write_text(".mochi_sync/\n")
-
-
-def load_deleted_ids():
-    """Load list of deleted card IDs."""
-    if not DELETED_FILE.exists():
-        return set()
-    return set(line.strip() for line in DELETED_FILE.read_text().splitlines() if line.strip())
-
-
-def save_deleted_ids(deleted_ids):
-    """Save list of deleted card IDs."""
-    ensure_sync_dir()
-    DELETED_FILE.write_text('\n'.join(sorted(deleted_ids)))
 
 
 def parse_markdown_cards(markdown_text):
@@ -417,11 +387,22 @@ def get_cards(deck_id, limit=100):
 
 
 def pull(deck_id):
-    """Pull cards from remote and merge with local changes.
+    """Download cards from Mochi to local file.
 
-    Performs three-way merge using last sync state as base.
+    This initializes or resets your local copy from the remote deck.
+    Local is source of truth - use git to manage local changes.
     """
-    print("Fetching remote cards...")
+    # Warn if local file exists
+    if LOCAL_FILE.exists():
+        print(f"⚠ Warning: {LOCAL_FILE} already exists")
+        print("This will overwrite your local changes.")
+        print("Tip: Use 'git diff' to see what you'll lose")
+        response = input("\nProceed? [y/N]: ").lower().strip()
+        if response not in ('y', 'yes'):
+            print("Aborted")
+            return
+
+    print("\nFetching cards from Mochi...")
     remote_cards = get_cards(deck_id)
 
     # Convert API cards to dict format
@@ -438,102 +419,30 @@ def pull(deck_id):
             'content_hash': content_hash(question, answer)
         })
 
-    # Check if this is first pull
-    if not LAST_SYNC_FILE.exists():
-        print("First sync - establishing baseline...")
-        ensure_sync_dir()
-
-        # Write to local file
-        with LOCAL_FILE.open('w', encoding='utf-8') as f:
-            for card in remote_dict_cards:
-                f.write(format_card_to_markdown(card) + '\n')
-
-        # Save as last sync state
-        with LAST_SYNC_FILE.open('w', encoding='utf-8') as f:
-            for card in remote_dict_cards:
-                f.write(format_card_to_markdown(card) + '\n')
-
-        print(f"✓ Pulled {len(remote_dict_cards)} cards to {LOCAL_FILE}")
-        return
-
-    # Load local and base states
-    print("Loading local changes...")
-    local_cards = []
-    if LOCAL_FILE.exists():
-        local_cards = parse_markdown_cards(LOCAL_FILE.read_text())
-
-    base_cards = parse_markdown_cards(LAST_SYNC_FILE.read_text())
-
-    # Build indices for three-way merge
-    base_by_id = {c['card_id']: c for c in base_cards if c['card_id']}
-    local_by_id = {c['card_id']: c for c in local_cards if c['card_id']}
-    remote_by_id = {c['card_id']: c for c in remote_dict_cards}
-
-    # Track changes
-    merged_cards = []
-    conflicts = []
-
-    # Process remote cards
-    for remote_card in remote_dict_cards:
-        card_id = remote_card['card_id']
-        base_card = base_by_id.get(card_id)
-        local_card = local_by_id.get(card_id)
-
-        if not base_card and not local_card:
-            # New remote card
-            merged_cards.append(remote_card)
-        elif local_card and base_card:
-            # Card exists in all three - check for conflicts
-            local_changed = local_card['content_hash'] != base_card['content_hash']
-            remote_changed = remote_card['content_hash'] != base_card['content_hash']
-
-            if local_changed and remote_changed:
-                # Conflict - local wins by default
-                conflicts.append((card_id, local_card, remote_card))
-                merged_cards.append(local_card)
-            elif local_changed:
-                # Only local changed
-                merged_cards.append(local_card)
-            else:
-                # Remote changed or no change
-                merged_cards.append(remote_card)
-        elif local_card:
-            # Exists locally but not in base - keep local (was added locally)
-            merged_cards.append(local_card)
-        else:
-            # Exists in base and remote but not local - was deleted locally, respect deletion
-            pass
-
-    # Add local-only new cards (card_id: null)
-    for local_card in local_cards:
-        if not local_card['card_id']:
-            merged_cards.append(local_card)
-
-    # Write merged result
+    # Write to local file
     with LOCAL_FILE.open('w', encoding='utf-8') as f:
-        for card in merged_cards:
-            f.write(format_card_to_markdown(card) + '\n')
-
-    # Update last sync state to match remote
-    with LAST_SYNC_FILE.open('w', encoding='utf-8') as f:
         for card in remote_dict_cards:
             f.write(format_card_to_markdown(card) + '\n')
 
-    if conflicts:
-        print(f"\n⚠ {len(conflicts)} conflict(s) detected - local changes kept:")
-        for card_id, local, remote in conflicts:
-            print(f"  - {card_id}: {local['question'][:50]}...")
+    print(f"✓ Downloaded {len(remote_dict_cards)} cards to {LOCAL_FILE}")
 
-    print(f"✓ Pulled and merged {len(remote_dict_cards)} remote cards")
-    print(f"  Local file: {len(merged_cards)} cards")
+    # First-time setup message
+    if not Path('.git').exists():
+        print("\nTip: Initialize git to track changes:")
+        print("  git init")
+        print(f"  git add {LOCAL_FILE}")
+        print("  git commit -m 'Initial cards from Mochi'")
 
 
 def push(deck_id, force=False):
-    """Push local changes to remote with duplicate detection.
+    """Push local changes to Mochi (one-way sync: local → remote).
+
+    Compares local file to remote and creates/updates/deletes to match.
+    Local is source of truth.
 
     Args:
         deck_id: Deck ID to push to
-        force: If True, skip duplicate warnings
+        force: If True, skip duplicate detection for new cards
     """
     if not LOCAL_FILE.exists():
         print(f"Error: {LOCAL_FILE} not found. Run 'pull' first.")
@@ -542,7 +451,6 @@ def push(deck_id, force=False):
     print("Loading local cards...")
     local_cards = parse_markdown_cards(LOCAL_FILE.read_text())
 
-    # Fetch remote state
     print("Fetching remote cards...")
     remote_cards = get_cards(deck_id)
     remote_by_id = {c['id']: c for c in remote_cards}
@@ -554,13 +462,9 @@ def push(deck_id, force=False):
         h = content_hash(q, a)
         remote_hashes[h] = card['id']
 
-    # Load deleted IDs
-    deleted_ids = load_deleted_ids()
-
-    # Track operations
+    # Determine operations needed
     to_create = []
     to_update = []
-    to_delete = []
     duplicates = []
 
     for local_card in local_cards:
@@ -576,21 +480,18 @@ def push(deck_id, force=False):
                 if local_card['content_hash'] != remote_hash:
                     to_update.append(local_card)
             else:
-                print(f"⚠ Card {card_id} not found remotely - will skip")
+                print(f"⚠ Warning: Card {card_id} not found remotely - will skip")
         else:
-            # Card has no ID - check for duplicates
+            # Card has no ID - check for duplicates before creating
             if local_card['content_hash'] in remote_hashes and not force:
                 duplicates.append((local_card, remote_hashes[local_card['content_hash']]))
             else:
                 to_create.append(local_card)
 
-    # Find deletions
+    # Find deletions: remote cards not in local
     local_ids = {c['card_id'] for c in local_cards if c['card_id']}
-    if LAST_SYNC_FILE.exists():
-        base_cards = parse_markdown_cards(LAST_SYNC_FILE.read_text())
-        base_ids = {c['card_id'] for c in base_cards if c['card_id']}
-        missing_ids = base_ids - local_ids
-        to_delete = [cid for cid in missing_ids if cid in remote_by_id]
+    remote_ids = set(remote_by_id.keys())
+    to_delete = remote_ids - local_ids
 
     # Handle duplicates
     if duplicates and not force:
@@ -633,7 +534,7 @@ def push(deck_id, force=False):
         print(f"  ✓ Created {created['id']}: {card['question'][:50]}...")
         created_count += 1
 
-        # Update local file with new ID
+        # Update card with new ID
         card['card_id'] = created['id']
 
     for card in to_update:
@@ -653,96 +554,15 @@ def push(deck_id, force=False):
         print(f"  ✓ Deleted {card_id}")
         deleted_count += 1
 
-    # Update local file with new IDs
+    # Write back local file with new IDs from created cards
     if created_count > 0:
         with LOCAL_FILE.open('w', encoding='utf-8') as f:
             for card in local_cards:
                 f.write(format_card_to_markdown(card) + '\n')
-
-    # Clear deleted IDs
-    save_deleted_ids(set())
-
-    # Update last sync state
-    print("\nUpdating sync state...")
-    remote_cards = get_cards(deck_id)
-    remote_dict_cards = []
-    for card in remote_cards:
-        question, answer = parse_card(card['content'])
-        tags = card.get('tags', []) if isinstance(card.get('tags'), list) else []
-        remote_dict_cards.append({
-            'card_id': card['id'],
-            'question': question,
-            'answer': answer,
-            'tags': tags,
-            'archived': card.get('archived', False),
-            'content_hash': content_hash(question, answer)
-        })
-
-    with LAST_SYNC_FILE.open('w', encoding='utf-8') as f:
-        for card in remote_dict_cards:
-            f.write(format_card_to_markdown(card) + '\n')
+        print(f"\nℹ Updated {LOCAL_FILE} with new card IDs")
+        print("Tip: Commit these changes: git add mochi_cards.md && git commit -m 'Add card IDs'")
 
     print(f"\n✓ Pushed changes: {created_count} created, {updated_count} updated, {deleted_count} deleted")
-
-
-def status():
-    """Show diff between local and remote."""
-    if not LOCAL_FILE.exists():
-        print(f"No local file found. Run 'pull' first.")
-        return
-
-    if not LAST_SYNC_FILE.exists():
-        print(f"No sync state found. Run 'pull' first.")
-        return
-
-    local_cards = parse_markdown_cards(LOCAL_FILE.read_text())
-    base_cards = parse_markdown_cards(LAST_SYNC_FILE.read_text())
-
-    local_by_id = {c['card_id']: c for c in local_cards if c['card_id']}
-    base_by_id = {c['card_id']: c for c in base_cards if c['card_id']}
-
-    # Find changes
-    new_cards = [c for c in local_cards if not c['card_id']]
-    modified = []
-    deleted = []
-
-    for card_id, base_card in base_by_id.items():
-        if card_id not in local_by_id:
-            deleted.append(card_id)
-        else:
-            local_card = local_by_id[card_id]
-            if local_card['content_hash'] != base_card['content_hash']:
-                modified.append(card_id)
-
-    # Display
-    print("\nLocal changes (not yet pushed):")
-    print(f"  New cards: {len(new_cards)}")
-    print(f"  Modified: {len(modified)}")
-    print(f"  Deleted: {len(deleted)}")
-
-    if new_cards:
-        print("\n  New cards:")
-        for card in new_cards[:5]:
-            print(f"    - {card['question'][:60]}...")
-        if len(new_cards) > 5:
-            print(f"    ... and {len(new_cards) - 5} more")
-
-    if modified:
-        print("\n  Modified:")
-        for card_id in modified[:5]:
-            print(f"    - {card_id}: {local_by_id[card_id]['question'][:60]}...")
-        if len(modified) > 5:
-            print(f"    ... and {len(modified) - 5} more")
-
-    if deleted:
-        print("\n  Deleted:")
-        for card_id in deleted[:5]:
-            print(f"    - {card_id}")
-        if len(deleted) > 5:
-            print(f"    ... and {len(deleted) - 5} more")
-
-    if not (new_cards or modified or deleted):
-        print("\n✓ Everything up to date")
 
 
 def display_grading_results(imperfect_cards, all_results):
@@ -789,11 +609,10 @@ def parse_args():
     subparsers.add_parser("decks", help="List all available decks")
 
     # Sync commands
-    subparsers.add_parser("pull", help="Pull cards from remote and merge with local")
-    push_parser = subparsers.add_parser("push", help="Push local changes to remote")
+    subparsers.add_parser("pull", help="Download cards from Mochi to local file")
+    push_parser = subparsers.add_parser("push", help="Push local changes to Mochi")
     push_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
-    subparsers.add_parser("status", help="Show local changes not yet pushed")
 
     # Local operations
     grade_parser = subparsers.add_parser("grade", help="Grade cards in local file using LLM")
@@ -840,8 +659,6 @@ def main():
         pull(DECK_ID)
     elif args.command == "push":
         push(DECK_ID, force=args.force)
-    elif args.command == "status":
-        status()
     elif args.command == "grade":
         imperfect_cards, all_results = grade_local_cards(batch_size=args.batch_size)
         display_grading_results(imperfect_cards, all_results)
