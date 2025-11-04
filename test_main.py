@@ -224,22 +224,25 @@ class TestCLI:
 
     def test_parse_args_grade_with_batch_size(self):
         """Test grade command with batch size."""
-        with patch('sys.argv', ['main.py', 'grade', '--batch-size', '10']):
+        with patch('sys.argv', ['main.py', 'grade', 'test-deck.md', '--batch-size', '10']):
             args = main.parse_args()
             assert args.command == 'grade'
+            assert args.file_path == 'test-deck.md'
             assert args.batch_size == 10
 
     def test_parse_args_pull(self):
         """Test pull command parsing."""
-        with patch('sys.argv', ['main.py', 'pull']):
+        with patch('sys.argv', ['main.py', 'pull', 'abc123']):
             args = main.parse_args()
             assert args.command == 'pull'
+            assert args.deck_id == 'abc123'
 
     def test_parse_args_push_with_force(self):
         """Test push command with force flag."""
-        with patch('sys.argv', ['main.py', 'push', '--force']):
+        with patch('sys.argv', ['main.py', 'push', 'test-abc123.md', '--force']):
             args = main.parse_args()
             assert args.command == 'push'
+            assert args.file_path == 'test-abc123.md'
             assert args.force is True
 
 

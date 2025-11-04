@@ -27,13 +27,9 @@ from datetime import datetime
 load_dotenv()
 API_KEY = os.getenv("MOCHI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-DECK_ID = os.getenv("DECK_ID")
 
 BASE_URL = "https://app.mochi.cards/api"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# Local file constant
-LOCAL_FILE = Path("mochi_cards.md")
 
 
 def parse_card(content):
@@ -46,6 +42,26 @@ def content_hash(question, answer):
     """Generate hash of card content for duplicate detection."""
     content = f"{question.strip()}\n---\n{answer.strip()}"
     return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+
+
+def sanitize_filename(name):
+    """Sanitize deck name for use in filename."""
+    # Replace spaces and special chars with hyphens
+    import re
+    name = re.sub(r'[^\w\s-]', '', name)
+    name = re.sub(r'[-\s]+', '-', name)
+    return name.strip('-').lower()
+
+
+def extract_deck_id_from_filename(file_path):
+    """Extract deck ID from filename format: <name>-<deck_id>.md"""
+    path = Path(file_path)
+    stem = path.stem  # Remove .md extension
+    # Deck ID is the last part after the last hyphen
+    parts = stem.split('-')
+    if len(parts) < 2:
+        raise ValueError(f"Invalid filename format. Expected: <name>-<deck_id>.md, got: {path.name}")
+    return parts[-1]
 
 
 def parse_markdown_cards(markdown_text):
@@ -157,6 +173,17 @@ def get_decks():
     response.raise_for_status()
     data = response.json()
     return data["docs"]
+
+
+def get_deck(deck_id):
+    """Fetch a specific deck by ID."""
+    response = requests.get(
+        f"{BASE_URL}/decks/{deck_id}",
+        auth=(API_KEY, ""),
+        timeout=30
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def create_card(deck_id, content, **kwargs):
@@ -305,21 +332,24 @@ Cards to grade:
     return results
 
 
-def grade_local_cards(batch_size=20):
-    """Grade cards from local file.
+def grade_local_cards(file_path, batch_size=20):
+    """Grade cards from local deck file.
 
     Args:
+        file_path: Path to deck file to grade
         batch_size: Number of cards per API request (default: 20)
 
     Returns:
         List of tuples: (card_dict, score, justification) for cards scoring < 10
     """
-    if not LOCAL_FILE.exists():
-        print(f"Error: {LOCAL_FILE} not found. Run 'pull' first.")
+    local_file = Path(file_path)
+
+    if not local_file.exists():
+        print(f"Error: {local_file} not found")
         return [], []
 
-    print(f"\nReading cards from {LOCAL_FILE}...")
-    local_cards = parse_markdown_cards(LOCAL_FILE.read_text())
+    print(f"\nReading cards from {local_file}...")
+    local_cards = parse_markdown_cards(local_file.read_text())
 
     if not local_cards:
         print("No cards found in local file.")
@@ -387,14 +417,23 @@ def get_cards(deck_id, limit=100):
 
 
 def pull(deck_id):
-    """Download cards from Mochi to local file.
+    """Download cards from Mochi to <deck-name>-<deck_id>.md file.
 
-    This initializes or resets your local copy from the remote deck.
-    Local is source of truth - use git to manage local changes.
+    Args:
+        deck_id: The Mochi deck ID to pull from
+
+    Creates a file named <deck-name>-<deck_id>.md with all cards from the deck.
     """
-    # Warn if local file exists
-    if LOCAL_FILE.exists():
-        print(f"⚠ Warning: {LOCAL_FILE} already exists")
+    print(f"Fetching deck info for {deck_id}...")
+    deck_info = get_deck(deck_id)
+    deck_name = sanitize_filename(deck_info['name'])
+
+    # Create filename: <deck-name>-<deck_id>.md
+    local_file = Path(f"{deck_name}-{deck_id}.md")
+
+    # Warn if file exists
+    if local_file.exists():
+        print(f"⚠ Warning: {local_file} already exists")
         print("This will overwrite your local changes.")
         print("Tip: Use 'git diff' to see what you'll lose")
         response = input("\nProceed? [y/N]: ").lower().strip()
@@ -402,7 +441,7 @@ def pull(deck_id):
             print("Aborted")
             return
 
-    print("\nFetching cards from Mochi...")
+    print(f"Fetching cards from deck '{deck_info['name']}'...")
     remote_cards = get_cards(deck_id)
 
     # Convert API cards to dict format
@@ -420,36 +459,45 @@ def pull(deck_id):
         })
 
     # Write to local file
-    with LOCAL_FILE.open('w', encoding='utf-8') as f:
+    with local_file.open('w', encoding='utf-8') as f:
         for card in remote_dict_cards:
             f.write(format_card_to_markdown(card) + '\n')
 
-    print(f"✓ Downloaded {len(remote_dict_cards)} cards to {LOCAL_FILE}")
+    print(f"✓ Downloaded {len(remote_dict_cards)} cards to {local_file}")
 
     # First-time setup message
     if not Path('.git').exists():
         print("\nTip: Initialize git to track changes:")
         print("  git init")
-        print(f"  git add {LOCAL_FILE}")
-        print("  git commit -m 'Initial cards from Mochi'")
+        print(f"  git add {local_file}")
+        print(f"  git commit -m 'Pull {deck_info['name']}'")
 
 
-def push(deck_id, force=False):
-    """Push local changes to Mochi (one-way sync: local → remote).
+def push(file_path, force=False):
+    """Push local deck file to Mochi (one-way sync: local → remote).
 
     Compares local file to remote and creates/updates/deletes to match.
     Local is source of truth.
 
     Args:
-        deck_id: Deck ID to push to
+        file_path: Path to deck file (<deck-name>-<deck_id>.md)
         force: If True, skip duplicate detection for new cards
     """
-    if not LOCAL_FILE.exists():
-        print(f"Error: {LOCAL_FILE} not found. Run 'pull' first.")
+    local_file = Path(file_path)
+
+    if not local_file.exists():
+        print(f"Error: {local_file} not found")
         return
 
-    print("Loading local cards...")
-    local_cards = parse_markdown_cards(LOCAL_FILE.read_text())
+    # Extract deck ID from filename
+    try:
+        deck_id = extract_deck_id_from_filename(local_file)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+
+    print(f"Loading local cards from {local_file}...")
+    local_cards = parse_markdown_cards(local_file.read_text())
 
     print("Fetching remote cards...")
     remote_cards = get_cards(deck_id)
@@ -556,11 +604,11 @@ def push(deck_id, force=False):
 
     # Write back local file with new IDs from created cards
     if created_count > 0:
-        with LOCAL_FILE.open('w', encoding='utf-8') as f:
+        with local_file.open('w', encoding='utf-8') as f:
             for card in local_cards:
                 f.write(format_card_to_markdown(card) + '\n')
-        print(f"\nℹ Updated {LOCAL_FILE} with new card IDs")
-        print("Tip: Commit these changes: git add mochi_cards.md && git commit -m 'Add card IDs'")
+        print(f"\nℹ Updated {local_file} with new card IDs")
+        print(f"Tip: Commit these changes: git add {local_file.name} && git commit -m 'Add card IDs'")
 
     print(f"\n✓ Pushed changes: {created_count} created, {updated_count} updated, {deleted_count} deleted")
 
@@ -605,17 +653,21 @@ def parse_args():
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
-    # Discovery command (doesn't require DECK_ID)
+    # Discovery command
     subparsers.add_parser("decks", help="List all available decks")
 
     # Sync commands
-    subparsers.add_parser("pull", help="Download cards from Mochi to local file")
-    push_parser = subparsers.add_parser("push", help="Push local changes to Mochi")
+    pull_parser = subparsers.add_parser("pull", help="Download deck from Mochi")
+    pull_parser.add_argument("deck_id", help="Deck ID to pull from Mochi")
+
+    push_parser = subparsers.add_parser("push", help="Push local deck file to Mochi")
+    push_parser.add_argument("file_path", help="Path to deck file (e.g., python-abc123.md)")
     push_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
     # Local operations
-    grade_parser = subparsers.add_parser("grade", help="Grade cards in local file using LLM")
+    grade_parser = subparsers.add_parser("grade", help="Grade cards in deck file using LLM")
+    grade_parser.add_argument("file_path", help="Path to deck file to grade")
     grade_parser.add_argument("--batch-size", type=int, default=20,
                              help="Cards per batch (default: 20)")
 
@@ -625,14 +677,15 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Handle commands that don't require DECK_ID
+    # Check API key for all commands
+    if not API_KEY:
+        print("Error: MOCHI_API_KEY not found in .env file")
+        print("\nCreate a .env file with:")
+        print("MOCHI_API_KEY=your_api_key_here")
+        sys.exit(1)
 
-    # List all decks (requires only API_KEY, not DECK_ID)
+    # Handle commands
     if args.command == "decks":
-        if not API_KEY:
-            print("Error: MOCHI_API_KEY not found in .env file")
-            sys.exit(1)
-
         print("Fetching decks...")
         decks = get_decks()
         print(f"\nAvailable decks ({len(decks)}):\n" + "=" * 60)
@@ -640,34 +693,30 @@ def main():
             print(f"\n  {deck['name']}")
             print(f"  ID: {deck['id']}")
             print("-" * 60)
-        print("\nTo use a deck, add its ID to your .env file:")
-        print("DECK_ID=<deck_id>")
+        print("\nTo pull a deck:")
+        print("  python main.py pull <deck_id>")
         return
 
-    # All other commands require both API_KEY and DECK_ID
-    if not API_KEY:
-        print("Error: MOCHI_API_KEY not found in .env file")
-        sys.exit(1)
+    elif args.command == "pull":
+        pull(args.deck_id)
 
-    if not DECK_ID:
-        print("Error: DECK_ID not found in .env file")
-        print("\nRun 'python main.py decks' to see available decks and get their IDs")
-        sys.exit(1)
-
-    # Commands that work on the configured deck
-    if args.command == "pull":
-        pull(DECK_ID)
     elif args.command == "push":
-        push(DECK_ID, force=args.force)
+        push(args.file_path, force=args.force)
+
     elif args.command == "grade":
-        imperfect_cards, all_results = grade_local_cards(batch_size=args.batch_size)
+        imperfect_cards, all_results = grade_local_cards(
+            args.file_path,
+            batch_size=args.batch_size
+        )
         display_grading_results(imperfect_cards, all_results)
+
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
         print("\nQuick start:")
-        print("  1. python main.py pull        # Download deck")
-        print("  2. Edit mochi_cards.md")
-        print("  3. python main.py push        # Upload changes")
+        print("  1. python main.py decks              # List decks")
+        print("  2. python main.py pull <deck_id>     # Download deck")
+        print("  3. Edit <deck-name>-<deck_id>.md")
+        print("  4. python main.py push <deck-name>-<deck_id>.md  # Upload changes")
 
 
 if __name__ == "__main__":

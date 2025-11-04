@@ -28,21 +28,17 @@ mochi-cards <command>
 
 **Core Sync Workflow**:
 ```bash
-python main.py pull                          # Download from Mochi (initialization/reset)
-python main.py push                          # Push local changes to Mochi
-python main.py push --force                  # Push without duplicate detection
+python main.py decks                         # List all decks
+python main.py pull <deck_id>                # Download deck from Mochi
+python main.py push <deck-file>.md           # Push local changes to Mochi
+python main.py push <deck-file>.md --force   # Push without duplicate detection
 ```
 
 **Local Operations**:
 ```bash
-python main.py grade --batch-size 20         # Grade cards in local file using LLM
+python main.py grade <deck-file>.md --batch-size 20  # Grade cards using LLM
 git status                                   # See what changed locally
-git diff mochi_cards.md                      # Review specific changes
-```
-
-**Discovery** (doesn't require DECK_ID):
-```bash
-python main.py decks                         # List all decks (only needs API_KEY)
+git diff <deck-file>.md                      # Review specific changes
 ```
 
 ### Running Tests
@@ -82,11 +78,10 @@ uv sync --extra dev
 The tool requires a `.env` file with:
 ```
 MOCHI_API_KEY=your_mochi_api_key
-DECK_ID=your_deck_id
 OPENROUTER_API_KEY=your_openrouter_api_key  # Only for grading feature
 ```
 
-All operations work on the single deck specified by `DECK_ID`.
+Deck files are managed independently with format: `<deck-name>-<deck_id>.md`
 
 ## Architecture
 
@@ -94,26 +89,29 @@ All operations work on the single deck specified by `DECK_ID`.
 All code is in `main.py` - a single Python module with no subdirectories or packages.
 Tests are in `test_main.py` using pytest framework.
 
-### Local-First Workflow
+### Local-First Multi-Deck Workflow
 
-The tool operates on a **local-first model** where your local `mochi_cards.md` is the source of truth:
+The tool operates on a **local-first model** with multiple deck support:
 
-1. **Local Working Copy**: `mochi_cards.md` - your editable deck file (source of truth)
-2. **Version Control**: Use git in your own directory to track changes
-3. **Workflow**: `pull` (once) → edit locally → commit → `push` to sync
+1. **Deck Files**: Each deck is `<deck-name>-<deck_id>.md` (source of truth)
+2. **Version Control**: Use git to track all decks in one repo
+3. **Workflow**: `pull <deck_id>` → edit locally → commit → `push <file>`
+
+**File Format**: `<deck-name>-<deck_id>.md`
+- Example: `python-basics-abc123xyz.md`
+- Deck ID is extracted from filename for sync
 
 **Benefits**:
+- Manage multiple decks in one git repo
 - Simple one-way sync: local → remote
-- No hidden state directories (`.mochi_sync/` removed)
-- Use git for version control and change tracking
-- Duplicate detection prevents card duplication
+- No hidden state directories
+- No DECK_ID in .env - decoupled from storage
 - Works offline for local operations
 
 **Key Commands**:
-- `pull`: Downloads from Mochi (initialization or reset)
-- `push`: Syncs local changes to Mochi (creates/updates/deletes to match local)
-- `git status/diff`: See what changed locally
-- `grade`: LLM-based card grading (works offline)
+- `pull <deck_id>`: Downloads from Mochi, creates `<name>-<deck_id>.md`
+- `push <file>`: Syncs that deck file to Mochi
+- `grade <file>`: LLM-based card grading
 
 ### Error Handling Philosophy
 **Fail fast.** The codebase intentionally avoids defensive error handling that swallows exceptions or provides defaults. Let exceptions propagate to the top rather than catching and continuing. This makes debugging easier and prevents silent failures.
@@ -121,20 +119,23 @@ The tool operates on a **local-first model** where your local `mochi_cards.md` i
 ### Core Functions
 
 **Sync Operations**:
-- **`pull(deck_id)`**: Download cards from Mochi to local file (initialization/reset)
-- **`push(deck_id, force=False)`**: One-way sync local → Mochi (create/update/delete to match local)
+- **`pull(deck_id)`**: Download cards from Mochi to `<deck-name>-<deck_id>.md` file
+- **`push(file_path, force=False)`**: One-way sync deck file → Mochi (extracts deck_id from filename)
+- **`get_deck(deck_id)`**: Fetch deck metadata (name, etc.)
 
 **Utility Functions**:
 - **`parse_card(content)`**: Parse card content into (question, answer) tuple
 - **`content_hash(question, answer)`**: Generate hash for duplicate detection
+- **`sanitize_filename(name)`**: Convert deck name to safe filename
+- **`extract_deck_id_from_filename(file_path)`**: Extract deck ID from `<name>-<deck_id>.md` format
 - **`parse_markdown_cards(markdown_text)`**: Parse markdown file into card dicts with metadata
 - **`format_card_to_markdown(card)`**: Format card dict to markdown with frontmatter
-- **`ensure_sync_dir()`**: Create .mochi_sync directory and update .gitignore
 - **`get_decks()`**: Fetch all decks from Mochi API
+- **`get_deck(deck_id)`**: Fetch specific deck info
 - **`find_deck(decks, deck_name, deck_id)`**: Find deck by name (partial match) or ID
 
 **Local Operations**:
-- **`grade_local_cards(batch_size=20)`**: Grade cards from local file using LLM
+- **`grade_local_cards(file_path, batch_size=20)`**: Grade cards from deck file using LLM
 
 **API Operations** (used internally by sync):
 - **`get_cards(deck_id, limit=100)`**: Paginated card fetching
@@ -187,32 +188,34 @@ New answer
 - Batches multiple cards per API call (default: 20) to minimize costs
 - Returns JSON-formatted grades with scores (0-10) and justifications
 
-### Single Deck Model & User Workflow
-The CLI operates on a single deck specified by `DECK_ID` in `.env`.
+### Multi-Deck Model & User Workflow
 
-**Recommended Setup** (separate from tool repo):
+**Recommended Setup** (separate git repo for all decks):
 ```bash
-# Create your own private cards directory
-mkdir ~/my-flashcards && cd ~/my-flashcards
+# Create your decks repository (separate from tool)
+mkdir ~/mochi-decks && cd ~/mochi-decks
 echo "MOCHI_API_KEY=..." > .env
-echo "DECK_ID=..." >> .env
+echo "OPENROUTER_API_KEY=..." >> .env  # Optional, for grading
 git init
 
-# Initialize from Mochi
-mochi-cards pull
-git add . && git commit -m "Initial cards"
+# Pull decks from Mochi
+mochi-cards decks                    # List available decks
+mochi-cards pull abc123xyz           # Creates: python-basics-abc123xyz.md
+mochi-cards pull def456uvw           # Creates: javascript-def456uvw.md
 
-# Daily workflow
-vim mochi_cards.md                   # Edit cards
+git add . && git commit -m "Initial decks"
+
+# Daily workflow with specific deck
+vim python-basics-abc123xyz.md       # Edit cards
 git diff                             # Review changes
-git commit -am "Add Python questions"
-mochi-cards push                     # Sync to Mochi
+git commit -am "Add list comprehension question"
+mochi-cards push python-basics-abc123xyz.md  # Sync to Mochi
 ```
 
 **Why separate directory?**
-- Tool repo is public, your cards are private
-- You control version history with your own git repo
-- Easy backup/restore
+- Tool repo (mochi-mochi) is public, your decks repo is private
+- Manage all decks in one version-controlled repo
+- No DECK_ID coupling in .env - each file carries its deck ID
 
 ### Testing Architecture
 - **Unit Tests**: Test utilities (parse_card, find_deck) and CLI parsing with mocks
