@@ -2,16 +2,21 @@
 """Mochi flashcard management CLI with local-first multi-deck workflow.
 
 Workflow:
-    1. mochi-mochi decks                      # List available decks
-    2. mochi-mochi pull <deck_id>             # Download to <name>-<deck_id>.md
-    3. Edit <name>-<deck_id>.md locally
-    4. mochi-mochi push <name>-<deck_id>.md   # Upload changes back to Mochi
+    1. mochi-mochi decks                              # List available decks
+    2. mochi-mochi pull <deck_id>                     # Download to deck-<name>-<deck_id>.md
+    3. Edit deck-<name>-<deck_id>.md locally
+    4. mochi-mochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi
+
+    Or create a new deck:
+    1. Create deck-<name>.md file locally
+    2. mochi-mochi push deck-<name>.md                # Creates deck in Mochi, renames file
 
 API usage:
-    from main import create_card, update_card, delete_card, pull, push
+    from main import create_card, update_card, delete_card, pull, push, create_deck
     card = create_card(deck_id, "What is X?\n---\nX is Y")
     update_card(card['id'], content="Updated")
     delete_card(card['id'])
+    deck = create_deck("My New Deck")
 """
 
 import argparse
@@ -208,13 +213,31 @@ def sanitize_filename(name):
 
 
 def extract_deck_id_from_filename(file_path):
-    """Extract deck ID from filename format: <name>-<deck_id>.md"""
+    """Extract deck ID from filename format: deck-<name>-<deck_id>.md
+
+    Returns None if filename is deck-<name>.md (new deck to be created).
+    """
     path = Path(file_path)
     stem = path.stem  # Remove .md extension
-    # Deck ID is the last part after the last hyphen
-    parts = stem.split('-')
-    if len(parts) < 2:
-        raise ValueError(f"Invalid filename format. Expected: <name>-<deck_id>.md, got: {path.name}")
+
+    # Check that filename starts with 'deck-'
+    if not stem.startswith('deck-'):
+        raise ValueError(f"Invalid filename format. Expected: deck-<name>-<deck_id>.md or deck-<name>.md, got: {path.name}")
+
+    # Remove 'deck-' prefix
+    stem_without_prefix = stem[5:]  # Remove 'deck-'
+
+    if not stem_without_prefix:
+        raise ValueError(f"Invalid filename format. Expected: deck-<name>-<deck_id>.md or deck-<name>.md, got: {path.name}")
+
+    # Split by hyphens to find deck ID
+    parts = stem_without_prefix.split('-')
+
+    # If only one part, it's a new deck (deck-<name>.md)
+    if len(parts) == 1:
+        return None
+
+    # Last part is the deck ID
     return parts[-1]
 
 
@@ -340,6 +363,31 @@ def get_deck(deck_id):
     return response.json()
 
 
+def create_deck(name, **kwargs):
+    """Create a new deck.
+
+    Args:
+        name: Name of the deck
+        **kwargs: Optional fields like parent-id, sort, etc.
+
+    Returns:
+        Created deck data including 'id'
+    """
+    data = {
+        "name": name,
+        **kwargs
+    }
+
+    response = requests.post(
+        f"{BASE_URL}/decks/",
+        auth=(API_KEY, ""),
+        json=data,
+        timeout=30
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def create_card(deck_id, content, **kwargs):
     """Create a new card.
 
@@ -446,6 +494,9 @@ def validate_deck_file(file_path):
     Raises:
         ValueError: If file structure is invalid
         FileNotFoundError: If file doesn't exist
+
+    Returns:
+        tuple: (cards, deck_id) where deck_id is None for new decks
     """
     local_file = Path(file_path)
 
@@ -462,7 +513,8 @@ def validate_deck_file(file_path):
     if not content.strip():
         raise ValueError(f"Deck file is empty: {file_path}")
 
-    # Validate filename format
+    # Validate filename format (will raise ValueError if invalid)
+    # Returns None for new decks (deck-<name>.md format)
     try:
         deck_id = extract_deck_id_from_filename(local_file)
     except ValueError as e:
@@ -508,23 +560,23 @@ def validate_deck_file(file_path):
         if not isinstance(archived, bool):
             raise ValueError(f"Card {idx}: Invalid archived format (must be boolean)")
 
-    return cards
+    return cards, deck_id
 
 
 def pull(deck_id):
-    """Download cards from Mochi to <deck-name>-<deck_id>.md file.
+    """Download cards from Mochi to deck-<deck-name>-<deck_id>.md file.
 
     Args:
         deck_id: The Mochi deck ID to pull from
 
-    Creates a file named <deck-name>-<deck_id>.md with all cards from the deck.
+    Creates a file named deck-<deck-name>-<deck_id>.md with all cards from the deck.
     """
     print(f"Fetching deck info for {deck_id}...")
     deck_info = get_deck(deck_id)
     deck_name = sanitize_filename(deck_info['name'])
 
-    # Create filename: <deck-name>-<deck_id>.md
-    local_file = Path(f"{deck_name}-{deck_id}.md")
+    # Create filename: deck-<deck-name>-<deck_id>.md
+    local_file = Path(f"deck-{deck_name}-{deck_id}.md")
 
     # Warn if file exists
     if local_file.exists():
@@ -575,7 +627,7 @@ def push(file_path, force=False):
     Local is source of truth.
 
     Args:
-        file_path: Path to deck file (<deck-name>-<deck_id>.md)
+        file_path: Path to deck file (deck-<name>-<deck_id>.md or deck-<name>.md for new decks)
         force: If True, skip duplicate detection for new cards
     """
     local_file = Path(file_path)
@@ -583,15 +635,37 @@ def push(file_path, force=False):
     # Validate deck file structure
     print(f"Validating {local_file}...")
     try:
-        local_cards = validate_deck_file(local_file)
+        local_cards, deck_id = validate_deck_file(local_file)
     except (ValueError, FileNotFoundError) as e:
         print(f"Error: {e}")
         return
 
-    # Extract deck ID from filename (already validated, but need the value)
-    deck_id = extract_deck_id_from_filename(local_file)
-
     print(f"✓ Validated {len(local_cards)} cards")
+
+    # Check if this is a new deck (no deck ID in filename)
+    if deck_id is None:
+        # Extract deck name from filename: deck-<name>.md -> <name>
+        stem = local_file.stem
+        deck_name = stem[5:]  # Remove 'deck-' prefix
+
+        print(f"\n→ Creating new deck '{deck_name}'...")
+        try:
+            new_deck = create_deck(deck_name)
+            deck_id = new_deck['id']
+            print(f"✓ Created deck with ID: {deck_id}")
+
+            # Rename file to include deck ID
+            sanitized_name = sanitize_filename(deck_name)
+            new_filename = f"deck-{sanitized_name}-{deck_id}.md"
+            new_file_path = local_file.parent / new_filename
+
+            local_file.rename(new_file_path)
+            local_file = new_file_path  # Update reference
+            print(f"✓ Renamed file to: {new_filename}")
+
+        except Exception as e:
+            print(f"Error creating deck: {e}")
+            return
 
     print("Fetching remote cards...")
     remote_cards = get_cards(deck_id)
@@ -1071,13 +1145,13 @@ def parse_args():
     pull_parser = subparsers.add_parser("pull", help="Download deck from Mochi")
     pull_parser.add_argument("deck_id", help="Deck ID to pull from Mochi")
 
-    push_parser = subparsers.add_parser("push", help="Push local deck file to Mochi")
-    push_parser.add_argument("file_path", help="Path to deck file (e.g., python-abc123.md)")
+    push_parser = subparsers.add_parser("push", help="Push local deck file to Mochi (creates new deck if no ID in filename)")
+    push_parser.add_argument("file_path", help="Path to deck file (e.g., deck-python-abc123.md or deck-mynewdeck.md)")
     push_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
     dedupe_parser = subparsers.add_parser("dedupe", help="Find and remove duplicate cards using semantic similarity")
-    dedupe_parser.add_argument("file_path", help="Path to deck file (e.g., python-abc123.md)")
+    dedupe_parser.add_argument("file_path", help="Path to deck file (e.g., deck-python-abc123.md)")
     dedupe_parser.add_argument("--threshold", type=float, default=0.85,
                               help="Similarity threshold (0.0-1.0, default: 0.85)")
 
@@ -1118,10 +1192,13 @@ def main():
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
         print("\nQuick start:")
-        print("  1. mochi-mochi decks              # List decks")
-        print("  2. mochi-mochi pull <deck_id>     # Download deck")
-        print("  3. Edit <deck-name>-<deck_id>.md")
-        print("  4. mochi-mochi push <deck-name>-<deck_id>.md  # Upload changes")
+        print("  1. mochi-mochi decks                          # List decks")
+        print("  2. mochi-mochi pull <deck_id>                 # Download deck")
+        print("  3. Edit deck-<deck-name>-<deck_id>.md")
+        print("  4. mochi-mochi push deck-<deck-name>-<deck_id>.md  # Upload changes")
+        print("\nOr create a new deck:")
+        print("  1. Create deck-<name>.md file")
+        print("  2. mochi-mochi push deck-<name>.md            # Creates deck in Mochi")
 
 
 if __name__ == "__main__":
