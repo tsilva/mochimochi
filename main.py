@@ -5,7 +5,8 @@ Workflow:
     1. mochi-mochi decks                              # List available decks
     2. mochi-mochi pull <deck_id>                     # Download to deck-<name>-<deck_id>.md
     3. Edit deck-<name>-<deck_id>.md locally
-    4. mochi-mochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi
+    4. mochi-mochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi (local → remote)
+       or: mochi-mochi sync deck-<name>-<deck_id>.md  # Bidirectional sync (handles remote deletions)
        or: mochi-mochi push                           # Upload all deck files in current directory
 
     Or create a new deck:
@@ -13,7 +14,7 @@ Workflow:
     2. mochi-mochi push deck-<name>.md                # Creates deck in Mochi, renames file
 
 API usage:
-    from main import create_card, update_card, delete_card, pull, push, create_deck
+    from main import create_card, update_card, delete_card, pull, push, sync, create_deck
     card = create_card(deck_id, "What is X?\n---\nX is Y")
     update_card(card['id'], content="Updated")
     delete_card(card['id'])
@@ -654,6 +655,9 @@ def push(file_path, force=False):
     Args:
         file_path: Path to deck file (deck-<name>-<deck_id>.md or deck-<name>.md for new decks)
         force: If True, skip duplicate detection for new cards
+
+    Raises:
+        AssertionError: If local cards with IDs don't exist remotely (data inconsistency)
     """
     local_file = Path(file_path)
 
@@ -707,6 +711,7 @@ def push(file_path, force=False):
     to_create = []
     to_update = []
     duplicates = []
+    missing_remote = []
 
     for local_card in local_cards:
         card_id = local_card['card_id']
@@ -721,13 +726,27 @@ def push(file_path, force=False):
                 if local_card['content_hash'] != remote_hash:
                     to_update.append(local_card)
             else:
-                print(f"⚠ Warning: Card {card_id} not found remotely - will skip")
+                # Card has ID but doesn't exist remotely - data inconsistency!
+                missing_remote.append(local_card)
         else:
             # Card has no ID - check for duplicates before creating
             if local_card['content_hash'] in remote_hashes and not force:
                 duplicates.append((local_card, remote_hashes[local_card['content_hash']]))
             else:
                 to_create.append(local_card)
+
+    # Check for data inconsistency: cards with IDs that don't exist remotely
+    if missing_remote:
+        print(f"\n❌ Error: Data inconsistency detected!")
+        print(f"Found {len(missing_remote)} card(s) with IDs that don't exist remotely.")
+        print("This indicates cards were deleted remotely but still exist locally.\n")
+        print("Missing cards:")
+        for card in missing_remote:
+            q_preview = card['question'][:60] + '...' if len(card['question']) > 60 else card['question']
+            print(f"  - {card['card_id']}: {q_preview}")
+        print("\nTo fix this, use 'sync' command instead of 'push'.")
+        print("The sync command will handle remotely-deleted cards.")
+        raise AssertionError(f"Push failed: {len(missing_remote)} local cards not found remotely")
 
     # Find deletions: remote cards not in local
     local_ids = {c['card_id'] for c in local_cards if c['card_id']}
@@ -804,6 +823,177 @@ def push(file_path, force=False):
         print(f"Tip: Commit these changes: git add {local_file.name} && git commit -m 'Add card IDs'")
 
     print(f"\n✓ Pushed changes: {created_count} created, {updated_count} updated, {deleted_count} deleted")
+
+
+def sync(file_path, force=False):
+    """Sync local deck file with Mochi (bidirectional sync with deletion handling).
+
+    Unlike push, sync handles the case where cards are deleted remotely:
+    - Cards deleted remotely will be removed from local file (with user confirmation)
+    - Local changes are pushed to remote (creates/updates)
+    - Remote deletions are pulled to local
+
+    Args:
+        file_path: Path to deck file (deck-<name>-<deck_id>.md)
+        force: If True, skip duplicate detection for new cards
+    """
+    local_file = Path(file_path)
+
+    # Validate deck file structure
+    print(f"Validating {local_file}...")
+    try:
+        local_cards, deck_id = validate_deck_file(local_file)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        return
+
+    print(f"✓ Validated {len(local_cards)} cards")
+
+    # Sync only works with existing decks (must have deck ID)
+    if deck_id is None:
+        print(f"\n❌ Error: Cannot sync new deck file (no deck ID in filename)")
+        print("Use 'push' command to create the deck first, then use 'sync'")
+        return
+
+    print("Fetching remote cards...")
+    remote_cards = get_cards(deck_id)
+    remote_by_id = {c['id']: c for c in remote_cards}
+
+    # Build content hash index for duplicate detection
+    remote_hashes = {}
+    for card in remote_cards:
+        q, a = parse_card(card['content'])
+        h = content_hash(q, a)
+        remote_hashes[h] = card['id']
+
+    # Determine operations needed
+    to_create = []
+    to_update = []
+    to_delete_locally = []  # Cards deleted remotely, need to delete locally
+    duplicates = []
+
+    for local_card in local_cards:
+        card_id = local_card['card_id']
+
+        if card_id:
+            # Card has ID - check if it exists remotely
+            if card_id in remote_by_id:
+                # Card exists remotely - check if update needed
+                remote_card = remote_by_id[card_id]
+                remote_q, remote_a = parse_card(remote_card['content'])
+                remote_hash = content_hash(remote_q, remote_a)
+
+                if local_card['content_hash'] != remote_hash:
+                    to_update.append(local_card)
+            else:
+                # Card has ID but doesn't exist remotely - was deleted remotely
+                to_delete_locally.append(local_card)
+        else:
+            # Card has no ID - check for duplicates before creating
+            if local_card['content_hash'] in remote_hashes and not force:
+                duplicates.append((local_card, remote_hashes[local_card['content_hash']]))
+            else:
+                to_create.append(local_card)
+
+    # Find remote deletions to apply locally
+    local_ids = {c['card_id'] for c in local_cards if c['card_id']}
+    remote_ids = set(remote_by_id.keys())
+    to_delete_remotely = remote_ids - local_ids  # Cards in remote but not local
+
+    # Handle duplicates
+    if duplicates and not force:
+        print(f"\n⚠ Found {len(duplicates)} potential duplicate(s):")
+        for local_card, remote_id in duplicates:
+            print(f"  - {local_card['question'][:60]}... (matches {remote_id})")
+        print("\nRun with --force to create anyway")
+        return
+
+    # Show summary
+    print(f"\nSync summary:")
+    print(f"  Create (local → remote): {len(to_create)}")
+    print(f"  Update (local → remote): {len(to_update)}")
+    print(f"  Delete remotely (local → remote): {len(to_delete_remotely)}")
+    print(f"  Delete locally (remote → local): {len(to_delete_locally)}")
+
+    # Show cards that will be deleted locally (most important for user to review)
+    if to_delete_locally:
+        print(f"\n⚠ Warning: {len(to_delete_locally)} card(s) will be DELETED LOCALLY:")
+        print("These cards exist locally but were deleted remotely:\n")
+        for card in to_delete_locally:
+            q_preview = card['question'][:60] + '...' if len(card['question']) > 60 else card['question']
+            print(f"  - {card['card_id']}: {q_preview}")
+
+    if not (to_create or to_update or to_delete_locally or to_delete_remotely):
+        print("\n✓ Everything in sync")
+        return
+
+    # Confirm
+    print()
+    response = input("Proceed with sync? [y/N]: ").lower().strip()
+    if response not in ('y', 'yes'):
+        print("Aborted")
+        return
+
+    # Apply changes
+    created_count = 0
+    updated_count = 0
+    deleted_remotely_count = 0
+    deleted_locally_count = 0
+
+    # Create new cards remotely
+    for card in to_create:
+        content = f"{card['question']}\n---\n{card['answer']}"
+        kwargs = {}
+        if card['tags']:
+            kwargs['tags'] = card['tags']
+        if card['archived']:
+            kwargs['archived?'] = True
+
+        created = create_card(deck_id, content, **kwargs)
+        print(f"  ✓ Created {created['id']}: {card['question'][:50]}...")
+        created_count += 1
+
+        # Update card with new ID
+        card['card_id'] = created['id']
+
+    # Update existing cards remotely
+    for card in to_update:
+        content = f"{card['question']}\n---\n{card['answer']}"
+        kwargs = {'content': content}
+        if card['tags']:
+            kwargs['tags'] = card['tags']
+        if card.get('archived'):
+            kwargs['archived?'] = True
+
+        update_card(card['card_id'], **kwargs)
+        print(f"  ✓ Updated {card['card_id']}: {card['question'][:50]}...")
+        updated_count += 1
+
+    # Delete cards remotely that were removed locally
+    for card_id in to_delete_remotely:
+        delete_card(card_id)
+        print(f"  ✓ Deleted remotely {card_id}")
+        deleted_remotely_count += 1
+
+    # Remove cards locally that were deleted remotely
+    if to_delete_locally:
+        cards_to_delete_ids = {card['card_id'] for card in to_delete_locally}
+        local_cards = [card for card in local_cards if card['card_id'] not in cards_to_delete_ids]
+        deleted_locally_count = len(cards_to_delete_ids)
+        print(f"  ✓ Removed {deleted_locally_count} card(s) locally")
+
+    # Write back local file with updates
+    with local_file.open('w', encoding='utf-8') as f:
+        for card in local_cards:
+            f.write(format_card_to_markdown(card) + '\n')
+
+    if created_count > 0 or deleted_locally_count > 0:
+        print(f"\nℹ Updated {local_file}")
+        print(f"Tip: Review changes with: git diff {local_file.name}")
+        if created_count > 0:
+            print(f"     Commit new IDs: git add {local_file.name} && git commit -m 'Sync: add card IDs'")
+
+    print(f"\n✓ Sync completed: {created_count} created, {updated_count} updated, {deleted_remotely_count} deleted remotely, {deleted_locally_count} deleted locally")
 
 
 def get_embedding(text, client):
@@ -1170,9 +1360,14 @@ def parse_args():
     pull_parser = subparsers.add_parser("pull", help="Download deck from Mochi")
     pull_parser.add_argument("deck_id", help="Deck ID to pull from Mochi")
 
-    push_parser = subparsers.add_parser("push", help="Push local deck file(s) to Mochi (creates new deck if no ID in filename)")
+    push_parser = subparsers.add_parser("push", help="Push local deck file(s) to Mochi (one-way: local → remote)")
     push_parser.add_argument("file_path", nargs='?', help="Path to deck file (e.g., deck-python-abc123.md or deck-mynewdeck.md). If omitted, pushes all deck-*.md files in current directory")
     push_parser.add_argument("--force", action="store_true",
+                            help="Skip duplicate detection")
+
+    sync_parser = subparsers.add_parser("sync", help="Bidirectional sync: handles remote deletions and local changes")
+    sync_parser.add_argument("file_path", help="Path to deck file (e.g., deck-python-abc123.md)")
+    sync_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
     dedupe_parser = subparsers.add_parser("dedupe", help="Find and remove duplicate cards using semantic similarity")
@@ -1237,6 +1432,9 @@ def main():
             # Single file push
             push(args.file_path, force=args.force)
 
+    elif args.command == "sync":
+        sync(args.file_path, force=args.force)
+
     elif args.command == "dedupe":
         # Load API key for dedupe command
         OPENROUTER_API_KEY = get_openrouter_api_key()
@@ -1248,7 +1446,8 @@ def main():
         print("  1. mochi-mochi decks                          # List decks")
         print("  2. mochi-mochi pull <deck_id>                 # Download deck")
         print("  3. Edit deck-<deck-name>-<deck_id>.md")
-        print("  4. mochi-mochi push deck-<deck-name>-<deck_id>.md  # Upload changes")
+        print("  4. mochi-mochi push deck-<deck-name>-<deck_id>.md  # Upload changes (one-way)")
+        print("     or: mochi-mochi sync deck-<deck-name>-<deck_id>.md  # Bidirectional sync")
         print("     or: mochi-mochi push                       # Upload all deck files")
         print("\nOr create a new deck:")
         print("  1. Create deck-<name>.md file")

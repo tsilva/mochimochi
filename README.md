@@ -78,7 +78,7 @@ EOF
 
 ## 💻 Usage
 
-**Curation Workflow:** Pull → Dedupe → Edit → Commit → Push
+**Curation Workflow:** Pull → Dedupe → Edit → Commit → Push (or Sync)
 
 ### 🔍 Find and Remove Duplicates
 
@@ -94,9 +94,14 @@ Uses OpenAI embeddings to find semantically similar cards. Interactive prompt le
 ```bash
 mochi-mochi decks                        # List all decks
 mochi-mochi pull <deck_id>               # Download deck to <name>-<id>.md
-mochi-mochi push <deck-file>.md          # Sync changes to Mochi
+mochi-mochi push <deck-file>.md          # One-way sync: local → remote (fails if remote cards deleted)
+mochi-mochi sync <deck-file>.md          # Bidirectional sync: handles remote deletions
 mochi-mochi push <deck-file>.md --force  # Push without duplicate detection
 ```
+
+**Push vs Sync:**
+- **`push`**: One-way sync (local → remote). Best for daily updates. Raises an error if cards exist locally but were deleted remotely, protecting you from data inconsistencies.
+- **`sync`**: Bidirectional sync that handles remote deletions. If cards are deleted remotely, they're removed from your local file after confirmation. Use when you've deleted cards in Mochi and want to sync those deletions locally.
 
 ### 📚 Managing Multiple Decks
 
@@ -135,8 +140,8 @@ A key-value data structure
 - `archived`: Set to `true` to archive (optional)
 
 **Sync behavior:**
-- Existing cards (with IDs) are updated
-- New cards (`card_id: null`) are created
+- **push**: Existing cards (with IDs) are updated, new cards (`card_id: null`) are created, fails if local cards were deleted remotely
+- **sync**: Same as push, but also removes locally any cards that were deleted remotely (with confirmation)
 - Duplicate detection prevents copies (use `--force` to bypass)
 
 ## 📄 License

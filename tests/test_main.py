@@ -531,5 +531,275 @@ class TestFindDeckFiles:
         assert deck_files[2].name == "deck-z-file.md"
 
 
+class TestSyncCommand:
+    """Test sync command functionality."""
+
+    def test_sync_detects_remotely_deleted_cards(self, tmp_path, monkeypatch):
+        """Test that sync detects and handles cards deleted remotely."""
+        # Create a deck file with cards
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Question 1
+---
+Answer 1
+---
+card_id: card2
+---
+Question 2
+---
+Answer 2
+---
+card_id: card3
+---
+Question 3
+---
+Answer 3
+""")
+
+        # Mock API_KEY
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        # Mock get_cards to return only card1 and card3 (card2 deleted remotely)
+        mock_remote_cards = [
+            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False},
+            {'id': 'card3', 'content': 'Question 3\n---\nAnswer 3', 'tags': [], 'archived': False}
+        ]
+
+        # Mock user input to proceed with sync
+        with patch('main.get_cards', return_value=mock_remote_cards), \
+             patch('builtins.input', return_value='y'):
+
+            main.sync(str(deck_file))
+
+        # Read the updated file
+        updated_content = deck_file.read_text()
+
+        # Verify card2 was removed locally
+        assert 'card1' in updated_content
+        assert 'card2' not in updated_content
+        assert 'card3' in updated_content
+        assert 'Question 2' not in updated_content
+
+    def test_sync_creates_new_cards_remotely(self, tmp_path, monkeypatch):
+        """Test that sync creates new cards without IDs remotely."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: null
+---
+New Question
+---
+New Answer
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        mock_remote_cards = []
+        mock_created_card = {'id': 'new_card_id', 'content': 'New Question\n---\nNew Answer'}
+
+        with patch('main.get_cards', return_value=mock_remote_cards), \
+             patch('main.create_card', return_value=mock_created_card), \
+             patch('builtins.input', return_value='y'):
+
+            main.sync(str(deck_file))
+
+        # Read updated file
+        updated_content = deck_file.read_text()
+
+        # Verify card was assigned an ID
+        assert 'card_id: new_card_id' in updated_content
+
+    def test_sync_updates_existing_cards(self, tmp_path, monkeypatch):
+        """Test that sync updates cards with changed content."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Updated Question
+---
+Updated Answer
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        mock_remote_cards = [
+            {'id': 'card1', 'content': 'Old Question\n---\nOld Answer', 'tags': [], 'archived': False}
+        ]
+
+        updated = False
+
+        def mock_update_card(card_id, **kwargs):
+            nonlocal updated
+            updated = True
+            assert card_id == 'card1'
+            assert 'Updated Question' in kwargs['content']
+            assert 'Updated Answer' in kwargs['content']
+
+        with patch('main.get_cards', return_value=mock_remote_cards), \
+             patch('main.update_card', side_effect=mock_update_card), \
+             patch('builtins.input', return_value='y'):
+
+            main.sync(str(deck_file))
+
+        assert updated, "update_card should have been called"
+
+    def test_sync_deletes_remote_cards_not_in_local(self, tmp_path, monkeypatch):
+        """Test that sync deletes remote cards that were removed locally."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Question 1
+---
+Answer 1
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        # Remote has card1 and card2, but local only has card1
+        mock_remote_cards = [
+            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False},
+            {'id': 'card2', 'content': 'Question 2\n---\nAnswer 2', 'tags': [], 'archived': False}
+        ]
+
+        deleted = False
+
+        def mock_delete_card(card_id):
+            nonlocal deleted
+            deleted = True
+            assert card_id == 'card2'
+
+        with patch('main.get_cards', return_value=mock_remote_cards), \
+             patch('main.delete_card', side_effect=mock_delete_card), \
+             patch('builtins.input', return_value='y'):
+
+            main.sync(str(deck_file))
+
+        assert deleted, "delete_card should have been called for card2"
+
+    def test_sync_aborts_without_confirmation(self, tmp_path, monkeypatch, capsys):
+        """Test that sync aborts when user doesn't confirm."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Question 1
+---
+Answer 1
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        mock_remote_cards = []
+
+        with patch('main.get_cards', return_value=mock_remote_cards), \
+             patch('builtins.input', return_value='n'):
+
+            main.sync(str(deck_file))
+
+        captured = capsys.readouterr()
+        assert 'Aborted' in captured.out
+
+    def test_sync_fails_for_new_deck_without_id(self, tmp_path, monkeypatch, capsys):
+        """Test that sync fails for new deck files without deck ID."""
+        deck_file = tmp_path / "deck-newdeck.md"
+        deck_file.write_text("""---
+card_id: null
+---
+Question
+---
+Answer
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        main.sync(str(deck_file))
+
+        captured = capsys.readouterr()
+        assert 'Cannot sync new deck file' in captured.out
+        assert 'Use \'push\' command' in captured.out
+
+    def test_sync_everything_in_sync(self, tmp_path, monkeypatch, capsys):
+        """Test sync when everything is already in sync."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Question 1
+---
+Answer 1
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        mock_remote_cards = [
+            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False}
+        ]
+
+        with patch('main.get_cards', return_value=mock_remote_cards):
+            main.sync(str(deck_file))
+
+        captured = capsys.readouterr()
+        assert 'Everything in sync' in captured.out
+
+
+class TestPushWithMissingRemoteCards:
+    """Test push command behavior when cards are missing remotely."""
+
+    def test_push_raises_assertion_for_missing_remote_cards(self, tmp_path, monkeypatch):
+        """Test that push raises AssertionError when cards exist locally but not remotely."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Question 1
+---
+Answer 1
+---
+card_id: card2
+---
+Question 2
+---
+Answer 2
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        # Remote only has card1 (card2 is missing)
+        mock_remote_cards = [
+            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False}
+        ]
+
+        with patch('main.get_cards', return_value=mock_remote_cards):
+            with pytest.raises(AssertionError) as exc_info:
+                main.push(str(deck_file))
+
+            assert 'local cards not found remotely' in str(exc_info.value)
+
+    def test_push_error_message_suggests_sync(self, tmp_path, monkeypatch, capsys):
+        """Test that push error message suggests using sync command."""
+        deck_file = tmp_path / "deck-test-Abc12345.md"
+        deck_file.write_text("""---
+card_id: missing_card
+---
+Question
+---
+Answer
+""")
+
+        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+
+        mock_remote_cards = []
+
+        with patch('main.get_cards', return_value=mock_remote_cards):
+            with pytest.raises(AssertionError):
+                main.push(str(deck_file))
+
+        captured = capsys.readouterr()
+        assert 'Data inconsistency detected' in captured.out
+        assert 'use \'sync\' command' in captured.out
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

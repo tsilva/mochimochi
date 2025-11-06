@@ -34,7 +34,8 @@ mochi-mochi <command>
 ```bash
 python main.py decks                              # List all decks
 python main.py pull <deck_id>                     # Download deck from Mochi (creates deck-<name>-<deck_id>.md)
-python main.py push deck-<name>-<deck_id>.md      # Push existing deck to Mochi
+python main.py push deck-<name>-<deck_id>.md      # Push existing deck to Mochi (one-way: local → remote)
+python main.py sync deck-<name>-<deck_id>.md      # Bidirectional sync (handles remote deletions)
 python main.py push deck-<name>.md                # Create new deck and push cards
 python main.py push deck-<name>-<deck_id>.md --force   # Push without duplicate detection
 git status                                        # See what changed locally
@@ -133,7 +134,8 @@ The tool operates on a **local-first model** with multiple deck support:
 
 **Sync Operations**:
 - **`pull(deck_id)`**: Download cards from Mochi to `deck-<deck-name>-<deck_id>.md` file
-- **`push(file_path, force=False)`**: One-way sync deck file → Mochi. Validates structure first, extracts deck_id from filename. If deck_id is None (new deck), creates deck in Mochi and renames file with new deck ID.
+- **`push(file_path, force=False)`**: One-way sync deck file → Mochi. Validates structure first, extracts deck_id from filename. If deck_id is None (new deck), creates deck in Mochi and renames file with new deck ID. Raises AssertionError if cards with IDs exist locally but not remotely (data inconsistency).
+- **`sync(file_path, force=False)`**: Bidirectional sync with remote deletion handling. Unlike push, handles cards deleted remotely by removing them locally (with user confirmation). Validates structure first. Only works with existing decks (must have deck_id in filename).
 - **`validate_deck_file(file_path)`**: Validate deck file structure before push operations. Returns tuple (cards, deck_id) where deck_id is None for new decks.
 - **`get_deck(deck_id)`**: Fetch deck metadata (name, etc.)
 - **`create_deck(name, **kwargs)`**: Create new deck in Mochi API
