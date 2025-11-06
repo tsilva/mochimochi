@@ -32,12 +32,13 @@ mochi-mochi <command>
 
 **Core Sync Workflow**:
 ```bash
-python main.py decks                         # List all decks
-python main.py pull <deck_id>                # Download deck from Mochi
-python main.py push <deck-file>.md           # Push local changes to Mochi
-python main.py push <deck-file>.md --force   # Push without duplicate detection
-git status                                   # See what changed locally
-git diff <deck-file>.md                      # Review specific changes
+python main.py decks                              # List all decks
+python main.py pull <deck_id>                     # Download deck from Mochi (creates deck-<name>-<deck_id>.md)
+python main.py push deck-<name>-<deck_id>.md      # Push existing deck to Mochi
+python main.py push deck-<name>.md                # Create new deck and push cards
+python main.py push deck-<name>-<deck_id>.md --force   # Push without duplicate detection
+git status                                        # See what changed locally
+git diff deck-<name>-<deck_id>.md                # Review specific changes
 ```
 
 ### Running Tests
@@ -85,7 +86,10 @@ MOCHI_API_KEY=your_mochi_api_key
 **Required:**
 - `MOCHI_API_KEY`: Auto-prompted on first run (get from https://app.mochi.cards/settings)
 
-Deck files are managed independently with format: `<deck-name>-<deck_id>.md`
+**Deck File Naming Convention**:
+- Existing decks: `deck-<deck-name>-<deck_id>.md` (e.g., `deck-python-basics-abc123xyz.md`)
+- New decks: `deck-<deck-name>.md` (e.g., `deck-my-new-deck.md`)
+- When pushing a new deck file (without ID), the tool will create the deck in Mochi and automatically rename the file to include the new deck ID
 
 ## Architecture
 
@@ -97,24 +101,30 @@ Tests are in `tests/test_main.py` using pytest framework.
 
 The tool operates on a **local-first model** with multiple deck support:
 
-1. **Deck Files**: Each deck is `<deck-name>-<deck_id>.md` (source of truth)
+1. **Deck Files**: Each deck is `deck-<deck-name>-<deck_id>.md` (source of truth)
 2. **Version Control**: Use git to track all decks in one repo
 3. **Workflow**: `pull <deck_id>` → edit locally → commit → `push <file>`
 
-**File Format**: `<deck-name>-<deck_id>.md`
-- Example: `python-basics-abc123xyz.md`
-- Deck ID is extracted from filename for sync
+**File Naming Convention**:
+- **Existing decks**: `deck-<deck-name>-<deck_id>.md`
+  - Example: `deck-python-basics-abc123xyz.md`
+  - Deck ID is extracted from filename for sync operations
+- **New decks**: `deck-<deck-name>.md` (no deck ID)
+  - Example: `deck-machine-learning.md`
+  - On first push, creates deck in Mochi and renames file to include new deck ID
 
 **Benefits**:
 - Manage multiple decks in one git repo
 - Simple one-way sync: local → remote
+- Create new decks directly from local files
 - No hidden state directories
 - No DECK_ID in .env - decoupled from storage
 - Works offline for local operations
 
 **Key Commands**:
-- `pull <deck_id>`: Downloads from Mochi, creates `<name>-<deck_id>.md`
-- `push <file>`: Syncs that deck file to Mochi
+- `pull <deck_id>`: Downloads from Mochi, creates `deck-<name>-<deck_id>.md`
+- `push deck-<name>-<deck_id>.md`: Syncs existing deck file to Mochi
+- `push deck-<name>.md`: Creates new deck in Mochi and renames file with new deck ID
 
 ### Error Handling Philosophy
 **Fail fast.** The codebase intentionally avoids defensive error handling that swallows exceptions or provides defaults. Let exceptions propagate to the top rather than catching and continuing. This makes debugging easier and prevents silent failures.
@@ -122,16 +132,17 @@ The tool operates on a **local-first model** with multiple deck support:
 ### Core Functions
 
 **Sync Operations**:
-- **`pull(deck_id)`**: Download cards from Mochi to `<deck-name>-<deck_id>.md` file
-- **`push(file_path, force=False)`**: One-way sync deck file → Mochi (validates structure first, then extracts deck_id from filename)
-- **`validate_deck_file(file_path)`**: Validate deck file structure before push operations (checks file format, card structure, required fields)
+- **`pull(deck_id)`**: Download cards from Mochi to `deck-<deck-name>-<deck_id>.md` file
+- **`push(file_path, force=False)`**: One-way sync deck file → Mochi. Validates structure first, extracts deck_id from filename. If deck_id is None (new deck), creates deck in Mochi and renames file with new deck ID.
+- **`validate_deck_file(file_path)`**: Validate deck file structure before push operations. Returns tuple (cards, deck_id) where deck_id is None for new decks.
 - **`get_deck(deck_id)`**: Fetch deck metadata (name, etc.)
+- **`create_deck(name, **kwargs)`**: Create new deck in Mochi API
 
 **Utility Functions**:
 - **`parse_card(content)`**: Parse card content into (question, answer) tuple
 - **`content_hash(question, answer)`**: Generate hash for duplicate detection
 - **`sanitize_filename(name)`**: Convert deck name to safe filename
-- **`extract_deck_id_from_filename(file_path)`**: Extract deck ID from `<name>-<deck_id>.md` format
+- **`extract_deck_id_from_filename(file_path)`**: Extract deck ID from `deck-<name>-<deck_id>.md` format. Returns None for new deck format `deck-<name>.md`.
 - **`parse_markdown_cards(markdown_text)`**: Parse markdown file into card dicts with metadata
 - **`format_card_to_markdown(card)`**: Format card dict to markdown with frontmatter
 - **`get_decks()`**: Fetch all decks from Mochi API
@@ -200,17 +211,30 @@ mochi-mochi decks
 mkdir ~/mochi-decks && cd ~/mochi-decks
 git init
 
-# Pull decks from Mochi
-mochi-mochi pull abc123xyz           # Creates: python-basics-abc123xyz.md
-mochi-mochi pull def456uvw           # Creates: javascript-def456uvw.md
+# Option 1: Pull existing decks from Mochi
+mochi-mochi pull abc123xyz           # Creates: deck-python-basics-abc123xyz.md
+mochi-mochi pull def456uvw           # Creates: deck-javascript-def456uvw.md
+
+# Option 2: Create a new deck locally
+cat > deck-machine-learning.md << 'EOF'
+---
+card_id: null
+tags: ["ml", "ai"]
+---
+What is supervised learning?
+---
+Learning from labeled data
+EOF
+
+mochi-mochi push deck-machine-learning.md    # Creates deck in Mochi, renames to deck-machine-learning-xyz123.md
 
 git add . && git commit -m "Initial decks"
 
-# Daily workflow with specific deck
-vim python-basics-abc123xyz.md       # Edit cards
-git diff                             # Review changes
+# Daily workflow with existing deck
+vim deck-python-basics-abc123xyz.md          # Edit cards
+git diff                                      # Review changes
 git commit -am "Add list comprehension question"
-mochi-mochi push python-basics-abc123xyz.md  # Sync to Mochi
+mochi-mochi push deck-python-basics-abc123xyz.md  # Sync to Mochi
 ```
 
 **Why separate directory?**
@@ -218,6 +242,7 @@ mochi-mochi push python-basics-abc123xyz.md  # Sync to Mochi
 - Manage all decks in one version-controlled repo
 - No config files in decks repo - API key stored globally in `~/.mochi-mochi/config`
 - Each deck file carries its deck ID in filename
+- Create new decks directly from local files without needing to access Mochi web UI
 
 ### Testing Architecture
 - **Unit Tests**: Test utilities (parse_card, find_deck, validate_deck_file) and CLI parsing with mocks

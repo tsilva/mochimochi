@@ -163,10 +163,10 @@ class TestCLI:
 
     def test_parse_args_push_with_force(self):
         """Test push command with force flag."""
-        with patch('sys.argv', ['main.py', 'push', 'test-abc123.md', '--force']):
+        with patch('sys.argv', ['main.py', 'push', 'deck-test-abc123.md', '--force']):
             args = main.parse_args()
             assert args.command == 'push'
-            assert args.file_path == 'test-abc123.md'
+            assert args.file_path == 'deck-test-abc123.md'
             assert args.force is True
 
 
@@ -262,7 +262,7 @@ class TestValidation:
 
     def test_validate_deck_file_valid(self, tmp_path):
         """Test validating a valid deck file."""
-        deck_file = tmp_path / "test-deck-abc123.md"
+        deck_file = tmp_path / "deck-test-abc123.md"
         deck_file.write_text("""---
 card_id: card1
 tags: ["python"]
@@ -278,14 +278,15 @@ What is ML?
 Machine Learning
 """)
 
-        cards = main.validate_deck_file(deck_file)
+        cards, deck_id = main.validate_deck_file(deck_file)
         assert len(cards) == 2
         assert cards[0]['question'] == 'What is Python?'
         assert cards[1]['question'] == 'What is ML?'
+        assert deck_id == 'abc123'
 
     def test_validate_deck_file_not_found(self, tmp_path):
         """Test validation fails for non-existent file."""
-        deck_file = tmp_path / "nonexistent-abc123.md"
+        deck_file = tmp_path / "deck-nonexistent-abc123.md"
 
         with pytest.raises(FileNotFoundError) as exc_info:
             main.validate_deck_file(deck_file)
@@ -293,7 +294,7 @@ Machine Learning
 
     def test_validate_deck_file_empty(self, tmp_path):
         """Test validation fails for empty file."""
-        deck_file = tmp_path / "empty-abc123.md"
+        deck_file = tmp_path / "deck-empty-abc123.md"
         deck_file.write_text("")
 
         with pytest.raises(ValueError) as exc_info:
@@ -317,7 +318,7 @@ Answer
 
     def test_validate_deck_file_no_cards(self, tmp_path):
         """Test validation fails when no cards found."""
-        deck_file = tmp_path / "nocards-abc123.md"
+        deck_file = tmp_path / "deck-nocards-abc123.md"
         deck_file.write_text("# Just a header\n\nSome text but no cards")
 
         with pytest.raises(ValueError) as exc_info:
@@ -326,7 +327,7 @@ Answer
 
     def test_validate_deck_file_empty_question(self, tmp_path):
         """Test validation fails for card with empty question."""
-        deck_file = tmp_path / "badcard-abc123.md"
+        deck_file = tmp_path / "deck-badcard-abc123.md"
         deck_file.write_text("""---
 card_id: card1
 ---
@@ -344,7 +345,7 @@ This has an answer but no question
 
     def test_validate_deck_file_empty_answer(self, tmp_path):
         """Test validation fails for card with empty answer."""
-        deck_file = tmp_path / "badcard-abc123.md"
+        deck_file = tmp_path / "deck-badcard-abc123.md"
         deck_file.write_text("""---
 card_id: card1
 ---
@@ -362,7 +363,7 @@ This has a question
 
     def test_validate_deck_file_whitespace_only(self, tmp_path):
         """Test validation fails for whitespace-only content."""
-        deck_file = tmp_path / "whitespace-abc123.md"
+        deck_file = tmp_path / "deck-whitespace-abc123.md"
         deck_file.write_text("   \n\n  \n  ")
 
         with pytest.raises(ValueError) as exc_info:
@@ -371,7 +372,7 @@ This has a question
 
     def test_validate_deck_file_multiple_cards(self, tmp_path):
         """Test validation succeeds with multiple valid cards."""
-        deck_file = tmp_path / "multi-abc123.md"
+        deck_file = tmp_path / "deck-multi-abc123.md"
         deck_file.write_text("""---
 card_id: card1
 tags: ["tag1", "tag2"]
@@ -395,10 +396,76 @@ Question 3?
 Answer 3
 """)
 
-        cards = main.validate_deck_file(deck_file)
+        cards, deck_id = main.validate_deck_file(deck_file)
         assert len(cards) == 3
         assert all('question' in card for card in cards)
         assert all('answer' in card for card in cards)
+        assert deck_id == 'abc123'
+
+    def test_validate_deck_file_new_deck(self, tmp_path):
+        """Test validating a new deck file (without deck ID)."""
+        deck_file = tmp_path / "deck-mynewdeck.md"
+        deck_file.write_text("""---
+card_id: null
+tags: ["python"]
+---
+What is Python?
+---
+A programming language
+---
+card_id: null
+---
+What is ML?
+---
+Machine Learning
+""")
+
+        cards, deck_id = main.validate_deck_file(deck_file)
+        assert len(cards) == 2
+        assert cards[0]['question'] == 'What is Python?'
+        assert cards[1]['question'] == 'What is ML?'
+        assert deck_id is None  # New deck has no ID yet
+
+
+class TestExtractDeckId:
+    """Test deck ID extraction from filenames."""
+
+    def test_extract_deck_id_valid(self, tmp_path):
+        """Test extracting deck ID from valid filename."""
+        deck_file = tmp_path / "deck-mytest-abc123.md"
+        deck_file.touch()
+        deck_id = main.extract_deck_id_from_filename(deck_file)
+        assert deck_id == 'abc123'
+
+    def test_extract_deck_id_new_deck(self, tmp_path):
+        """Test extracting deck ID from new deck filename (no ID)."""
+        deck_file = tmp_path / "deck-mynewdeck.md"
+        deck_file.touch()
+        deck_id = main.extract_deck_id_from_filename(deck_file)
+        assert deck_id is None
+
+    def test_extract_deck_id_hyphenated_name(self, tmp_path):
+        """Test extracting deck ID from filename with hyphens in name."""
+        deck_file = tmp_path / "deck-my-cool-deck-xyz789.md"
+        deck_file.touch()
+        deck_id = main.extract_deck_id_from_filename(deck_file)
+        assert deck_id == 'xyz789'
+
+    def test_extract_deck_id_invalid_no_prefix(self, tmp_path):
+        """Test error for filename without deck- prefix."""
+        deck_file = tmp_path / "mytest-abc123.md"
+        deck_file.touch()
+        with pytest.raises(ValueError) as exc_info:
+            main.extract_deck_id_from_filename(deck_file)
+        assert "Expected: deck-" in str(exc_info.value)
+
+    def test_extract_deck_id_invalid_just_deck(self, tmp_path):
+        """Test error for filename that is just 'deck-.md'."""
+        deck_file = tmp_path / "deck-.md"
+        deck_file.touch()
+        with pytest.raises(ValueError) as exc_info:
+            main.extract_deck_id_from_filename(deck_file)
+        assert "Expected: deck-" in str(exc_info.value)
 
 
 if __name__ == '__main__':
