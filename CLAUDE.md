@@ -52,7 +52,7 @@ pytest -m "not integration"
 TEST_DECK_ID=your_deck_id pytest
 
 # Run specific test class
-pytest test_main.py::TestParseCard -v
+pytest tests/test_main.py::TestParseCard -v
 
 # Run with coverage
 pytest --cov=main --cov-report=term-missing
@@ -91,7 +91,7 @@ Deck files are managed independently with format: `<deck-name>-<deck_id>.md`
 
 ### Single-File Structure
 All code is in `main.py` - a single Python module with no subdirectories or packages.
-Tests are in `test_main.py` using pytest framework.
+Tests are in `tests/test_main.py` using pytest framework.
 
 ### Local-First Multi-Deck Workflow
 
@@ -223,8 +223,9 @@ mochi-mochi push python-basics-abc123xyz.md  # Sync to Mochi
 - **Unit Tests**: Test utilities (parse_card, find_deck, validate_deck_file) and CLI parsing with mocks
 - **Integration Tests**: Marked with `@pytest.mark.integration`, test live API operations
 - **Mocking**: Uses `unittest.mock` and `pytest-mock` for external API calls
-- **Fixtures**: Reusable test data (sample_decks, sample_cards) defined in test_main.py
+- **Fixtures**: Reusable test data (sample_decks, sample_cards) defined in tests/test_main.py
 - **Test Organization**: Tests grouped by functionality in classes (TestParseCard, TestFindDeck, TestValidation, TestCRUDOperations, etc.)
+- **Test Location**: All tests are in the `tests/` directory
 
 Integration tests require `TEST_DECK_ID` environment variable and are skipped by default.
 

@@ -49,7 +49,7 @@ mochi-mochi = "main:main"
 py-modules = ["main"]
 
 [tool.pytest.ini_options]
-testpaths = ["."]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 markers = [
