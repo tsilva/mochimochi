@@ -8,6 +8,7 @@ Workflow:
     4. mochi-mochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi (local → remote)
        or: mochi-mochi sync deck-<name>-<deck_id>.md  # Bidirectional sync (handles remote deletions)
        or: mochi-mochi push                           # Upload all deck files in current directory
+       or: mochi-mochi sync                           # Sync all deck files in current directory
 
     Or create a new deck:
     1. Create deck-<name>.md file locally
@@ -1366,7 +1367,7 @@ def parse_args():
                             help="Skip duplicate detection")
 
     sync_parser = subparsers.add_parser("sync", help="Bidirectional sync: handles remote deletions and local changes")
-    sync_parser.add_argument("file_path", help="Path to deck file (e.g., deck-python-abc123.md)")
+    sync_parser.add_argument("file_path", nargs='?', help="Path to deck file (e.g., deck-python-abc123.md). If omitted, syncs all deck-*.md files in current directory")
     sync_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
@@ -1433,7 +1434,35 @@ def main():
             push(args.file_path, force=args.force)
 
     elif args.command == "sync":
-        sync(args.file_path, force=args.force)
+        # If no file specified, batch sync all deck files in current directory
+        if args.file_path is None:
+            deck_files = find_deck_files()
+
+            if not deck_files:
+                print("Error: No deck files found in current directory")
+                print("Deck files must match pattern: deck-*.md")
+                return
+
+            print(f"Found {len(deck_files)} deck file(s) to sync:\n")
+            for deck_file in deck_files:
+                print(f"  - {deck_file.name}")
+
+            response = input(f"\nProceed to sync {len(deck_files)} deck file(s)? [y/N]: ").lower().strip()
+            if response not in ('y', 'yes'):
+                print("Aborted")
+                return
+
+            # Sync each deck file
+            for idx, deck_file in enumerate(deck_files, 1):
+                print(f"\n{'=' * 70}")
+                print(f"Syncing deck {idx}/{len(deck_files)}: {deck_file.name}")
+                print('=' * 70)
+                sync(str(deck_file), force=args.force)
+
+            print(f"\n✓ Batch sync completed: {len(deck_files)} deck(s) processed")
+        else:
+            # Single file sync
+            sync(args.file_path, force=args.force)
 
     elif args.command == "dedupe":
         # Load API key for dedupe command
@@ -1449,6 +1478,7 @@ def main():
         print("  4. mochi-mochi push deck-<deck-name>-<deck_id>.md  # Upload changes (one-way)")
         print("     or: mochi-mochi sync deck-<deck-name>-<deck_id>.md  # Bidirectional sync")
         print("     or: mochi-mochi push                       # Upload all deck files")
+        print("     or: mochi-mochi sync                       # Sync all deck files")
         print("\nOr create a new deck:")
         print("  1. Create deck-<name>.md file")
         print("  2. mochi-mochi push deck-<name>.md            # Creates deck in Mochi")
