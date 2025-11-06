@@ -482,5 +482,54 @@ class TestExtractDeckId:
         assert deck_id is None
 
 
+class TestFindDeckFiles:
+    """Test finding deck files in a directory."""
+
+    def test_find_deck_files_multiple(self, tmp_path):
+        """Test finding multiple deck files."""
+        # Create test deck files
+        (tmp_path / "deck-python-abc123Xy.md").touch()
+        (tmp_path / "deck-javascript-def456Zw.md").touch()
+        (tmp_path / "deck-ruby.md").touch()  # New deck without ID
+        # Create non-deck file
+        (tmp_path / "README.md").touch()
+
+        deck_files = main.find_deck_files(str(tmp_path))
+
+        assert len(deck_files) == 3
+        assert any(f.name == "deck-python-abc123Xy.md" for f in deck_files)
+        assert any(f.name == "deck-javascript-def456Zw.md" for f in deck_files)
+        assert any(f.name == "deck-ruby.md" for f in deck_files)
+        # Should not include non-deck files
+        assert not any(f.name == "README.md" for f in deck_files)
+
+    def test_find_deck_files_empty(self, tmp_path):
+        """Test finding deck files in empty directory."""
+        deck_files = main.find_deck_files(str(tmp_path))
+        assert len(deck_files) == 0
+
+    def test_find_deck_files_no_deck_files(self, tmp_path):
+        """Test finding deck files when only non-deck files exist."""
+        (tmp_path / "README.md").touch()
+        (tmp_path / "notes.txt").touch()
+
+        deck_files = main.find_deck_files(str(tmp_path))
+        assert len(deck_files) == 0
+
+    def test_find_deck_files_sorted(self, tmp_path):
+        """Test that deck files are returned sorted."""
+        # Create files in non-alphabetical order
+        (tmp_path / "deck-z-file.md").touch()
+        (tmp_path / "deck-a-file.md").touch()
+        (tmp_path / "deck-m-file.md").touch()
+
+        deck_files = main.find_deck_files(str(tmp_path))
+
+        assert len(deck_files) == 3
+        assert deck_files[0].name == "deck-a-file.md"
+        assert deck_files[1].name == "deck-m-file.md"
+        assert deck_files[2].name == "deck-z-file.md"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

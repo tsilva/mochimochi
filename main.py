@@ -6,6 +6,7 @@ Workflow:
     2. mochi-mochi pull <deck_id>                     # Download to deck-<name>-<deck_id>.md
     3. Edit deck-<name>-<deck_id>.md locally
     4. mochi-mochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi
+       or: mochi-mochi push                           # Upload all deck files in current directory
 
     Or create a new deck:
     1. Create deck-<name>.md file locally
@@ -493,6 +494,20 @@ def get_cards(deck_id, limit=100):
             break
 
     return cards
+
+
+def find_deck_files(directory='.'):
+    """Find all deck files in the specified directory.
+
+    Args:
+        directory: Directory to search (default: current directory)
+
+    Returns:
+        List of Path objects for deck files matching pattern deck-*.md
+    """
+    from glob import glob
+    deck_files = glob(f"{directory}/deck-*.md")
+    return sorted([Path(f) for f in deck_files])
 
 
 def validate_deck_file(file_path):
@@ -1155,8 +1170,8 @@ def parse_args():
     pull_parser = subparsers.add_parser("pull", help="Download deck from Mochi")
     pull_parser.add_argument("deck_id", help="Deck ID to pull from Mochi")
 
-    push_parser = subparsers.add_parser("push", help="Push local deck file to Mochi (creates new deck if no ID in filename)")
-    push_parser.add_argument("file_path", help="Path to deck file (e.g., deck-python-abc123.md or deck-mynewdeck.md)")
+    push_parser = subparsers.add_parser("push", help="Push local deck file(s) to Mochi (creates new deck if no ID in filename)")
+    push_parser.add_argument("file_path", nargs='?', help="Path to deck file (e.g., deck-python-abc123.md or deck-mynewdeck.md). If omitted, pushes all deck-*.md files in current directory")
     push_parser.add_argument("--force", action="store_true",
                             help="Skip duplicate detection")
 
@@ -1192,7 +1207,35 @@ def main():
         pull(args.deck_id)
 
     elif args.command == "push":
-        push(args.file_path, force=args.force)
+        # If no file specified, batch push all deck files in current directory
+        if args.file_path is None:
+            deck_files = find_deck_files()
+
+            if not deck_files:
+                print("Error: No deck files found in current directory")
+                print("Deck files must match pattern: deck-*.md")
+                return
+
+            print(f"Found {len(deck_files)} deck file(s) to push:\n")
+            for deck_file in deck_files:
+                print(f"  - {deck_file.name}")
+
+            response = input(f"\nProceed to push {len(deck_files)} deck file(s)? [y/N]: ").lower().strip()
+            if response not in ('y', 'yes'):
+                print("Aborted")
+                return
+
+            # Push each deck file
+            for idx, deck_file in enumerate(deck_files, 1):
+                print(f"\n{'=' * 70}")
+                print(f"Pushing deck {idx}/{len(deck_files)}: {deck_file.name}")
+                print('=' * 70)
+                push(str(deck_file), force=args.force)
+
+            print(f"\n✓ Batch push completed: {len(deck_files)} deck(s) processed")
+        else:
+            # Single file push
+            push(args.file_path, force=args.force)
 
     elif args.command == "dedupe":
         # Load API key for dedupe command
@@ -1206,6 +1249,7 @@ def main():
         print("  2. mochi-mochi pull <deck_id>                 # Download deck")
         print("  3. Edit deck-<deck-name>-<deck_id>.md")
         print("  4. mochi-mochi push deck-<deck-name>-<deck_id>.md  # Upload changes")
+        print("     or: mochi-mochi push                       # Upload all deck files")
         print("\nOr create a new deck:")
         print("  1. Create deck-<name>.md file")
         print("  2. mochi-mochi push deck-<name>.md            # Creates deck in Mochi")
