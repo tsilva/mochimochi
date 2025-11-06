@@ -257,5 +257,149 @@ Machine Learning
         assert 'Old question' in markdown
 
 
+class TestValidation:
+    """Test deck file validation."""
+
+    def test_validate_deck_file_valid(self, tmp_path):
+        """Test validating a valid deck file."""
+        deck_file = tmp_path / "test-deck-abc123.md"
+        deck_file.write_text("""---
+card_id: card1
+tags: ["python"]
+---
+What is Python?
+---
+A programming language
+---
+card_id: null
+---
+What is ML?
+---
+Machine Learning
+""")
+
+        cards = main.validate_deck_file(deck_file)
+        assert len(cards) == 2
+        assert cards[0]['question'] == 'What is Python?'
+        assert cards[1]['question'] == 'What is ML?'
+
+    def test_validate_deck_file_not_found(self, tmp_path):
+        """Test validation fails for non-existent file."""
+        deck_file = tmp_path / "nonexistent-abc123.md"
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            main.validate_deck_file(deck_file)
+        assert "not found" in str(exc_info.value)
+
+    def test_validate_deck_file_empty(self, tmp_path):
+        """Test validation fails for empty file."""
+        deck_file = tmp_path / "empty-abc123.md"
+        deck_file.write_text("")
+
+        with pytest.raises(ValueError) as exc_info:
+            main.validate_deck_file(deck_file)
+        assert "empty" in str(exc_info.value).lower()
+
+    def test_validate_deck_file_invalid_filename(self, tmp_path):
+        """Test validation fails for invalid filename format."""
+        deck_file = tmp_path / "invalid.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+Question?
+---
+Answer
+""")
+
+        with pytest.raises(ValueError) as exc_info:
+            main.validate_deck_file(deck_file)
+        assert "filename format" in str(exc_info.value).lower()
+
+    def test_validate_deck_file_no_cards(self, tmp_path):
+        """Test validation fails when no cards found."""
+        deck_file = tmp_path / "nocards-abc123.md"
+        deck_file.write_text("# Just a header\n\nSome text but no cards")
+
+        with pytest.raises(ValueError) as exc_info:
+            main.validate_deck_file(deck_file)
+        assert "no cards" in str(exc_info.value).lower()
+
+    def test_validate_deck_file_empty_question(self, tmp_path):
+        """Test validation fails for card with empty question."""
+        deck_file = tmp_path / "badcard-abc123.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+
+---
+This has an answer but no question
+""")
+
+        # Parsing may fail to create cards with empty question, resulting in "no cards"
+        with pytest.raises(ValueError) as exc_info:
+            main.validate_deck_file(deck_file)
+        # Accept either "no cards" or "empty question" error
+        error_msg = str(exc_info.value).lower()
+        assert "no cards" in error_msg or "empty question" in error_msg
+
+    def test_validate_deck_file_empty_answer(self, tmp_path):
+        """Test validation fails for card with empty answer."""
+        deck_file = tmp_path / "badcard-abc123.md"
+        deck_file.write_text("""---
+card_id: card1
+---
+This has a question
+---
+
+""")
+
+        # Parsing may fail to create cards with empty answer, resulting in "no cards"
+        with pytest.raises(ValueError) as exc_info:
+            main.validate_deck_file(deck_file)
+        # Accept either "no cards" or "empty answer" error
+        error_msg = str(exc_info.value).lower()
+        assert "no cards" in error_msg or "empty answer" in error_msg
+
+    def test_validate_deck_file_whitespace_only(self, tmp_path):
+        """Test validation fails for whitespace-only content."""
+        deck_file = tmp_path / "whitespace-abc123.md"
+        deck_file.write_text("   \n\n  \n  ")
+
+        with pytest.raises(ValueError) as exc_info:
+            main.validate_deck_file(deck_file)
+        assert "empty" in str(exc_info.value).lower()
+
+    def test_validate_deck_file_multiple_cards(self, tmp_path):
+        """Test validation succeeds with multiple valid cards."""
+        deck_file = tmp_path / "multi-abc123.md"
+        deck_file.write_text("""---
+card_id: card1
+tags: ["tag1", "tag2"]
+archived: false
+---
+Question 1?
+---
+Answer 1
+---
+card_id: card2
+tags: []
+---
+Question 2?
+---
+Answer 2
+---
+card_id: null
+---
+Question 3?
+---
+Answer 3
+""")
+
+        cards = main.validate_deck_file(deck_file)
+        assert len(cards) == 3
+        assert all('question' in card for card in cards)
+        assert all('answer' in card for card in cards)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

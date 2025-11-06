@@ -437,6 +437,80 @@ def get_cards(deck_id, limit=100):
     return cards
 
 
+def validate_deck_file(file_path):
+    """Validate deck file structure before push operations.
+
+    Args:
+        file_path: Path to deck file to validate
+
+    Raises:
+        ValueError: If file structure is invalid
+        FileNotFoundError: If file doesn't exist
+    """
+    local_file = Path(file_path)
+
+    # Check file exists
+    if not local_file.exists():
+        raise FileNotFoundError(f"Deck file not found: {file_path}")
+
+    # Check file is readable and has content
+    try:
+        content = local_file.read_text(encoding='utf-8')
+    except Exception as e:
+        raise ValueError(f"Cannot read file {file_path}: {e}")
+
+    if not content.strip():
+        raise ValueError(f"Deck file is empty: {file_path}")
+
+    # Validate filename format
+    try:
+        deck_id = extract_deck_id_from_filename(local_file)
+    except ValueError as e:
+        raise ValueError(f"Invalid filename format: {e}")
+
+    # Parse cards - will fail if structure is invalid
+    try:
+        cards = parse_markdown_cards(content)
+    except Exception as e:
+        raise ValueError(f"Failed to parse deck file: {e}")
+
+    if not cards:
+        raise ValueError(f"No cards found in deck file: {file_path}")
+
+    # Validate each card structure
+    for idx, card in enumerate(cards, 1):
+        # Check required fields exist
+        if 'question' not in card or 'answer' not in card:
+            raise ValueError(f"Card {idx}: Missing question or answer field")
+
+        # Check question and answer are not empty
+        question = card['question'].strip()
+        answer = card['answer'].strip()
+
+        if not question:
+            raise ValueError(f"Card {idx}: Empty question")
+
+        if not answer:
+            raise ValueError(f"Card {idx}: Empty answer")
+
+        # Validate card_id format if present
+        card_id = card.get('card_id')
+        if card_id and not isinstance(card_id, str):
+            raise ValueError(f"Card {idx}: Invalid card_id type (must be string or None)")
+
+        # Validate tags format
+        tags = card.get('tags', [])
+        if not isinstance(tags, list):
+            raise ValueError(f"Card {idx}: Invalid tags format (must be list)")
+
+        # Validate archived format
+        archived = card.get('archived', False)
+        if not isinstance(archived, bool):
+            raise ValueError(f"Card {idx}: Invalid archived format (must be boolean)")
+
+    return cards
+
+
 def pull(deck_id):
     """Download cards from Mochi to <deck-name>-<deck_id>.md file.
 
@@ -506,19 +580,18 @@ def push(file_path, force=False):
     """
     local_file = Path(file_path)
 
-    if not local_file.exists():
-        print(f"Error: {local_file} not found")
-        return
-
-    # Extract deck ID from filename
+    # Validate deck file structure
+    print(f"Validating {local_file}...")
     try:
-        deck_id = extract_deck_id_from_filename(local_file)
-    except ValueError as e:
+        local_cards = validate_deck_file(local_file)
+    except (ValueError, FileNotFoundError) as e:
         print(f"Error: {e}")
         return
 
-    print(f"Loading local cards from {local_file}...")
-    local_cards = parse_markdown_cards(local_file.read_text())
+    # Extract deck ID from filename (already validated, but need the value)
+    deck_id = extract_deck_id_from_filename(local_file)
+
+    print(f"✓ Validated {len(local_cards)} cards")
 
     print("Fetching remote cards...")
     remote_cards = get_cards(deck_id)

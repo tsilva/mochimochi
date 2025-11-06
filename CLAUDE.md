@@ -123,7 +123,8 @@ The tool operates on a **local-first model** with multiple deck support:
 
 **Sync Operations**:
 - **`pull(deck_id)`**: Download cards from Mochi to `<deck-name>-<deck_id>.md` file
-- **`push(file_path, force=False)`**: One-way sync deck file → Mochi (extracts deck_id from filename)
+- **`push(file_path, force=False)`**: One-way sync deck file → Mochi (validates structure first, then extracts deck_id from filename)
+- **`validate_deck_file(file_path)`**: Validate deck file structure before push operations (checks file format, card structure, required fields)
 - **`get_deck(deck_id)`**: Fetch deck metadata (name, etc.)
 
 **Utility Functions**:
@@ -219,11 +220,11 @@ mochi-mochi push python-basics-abc123xyz.md  # Sync to Mochi
 - Each deck file carries its deck ID in filename
 
 ### Testing Architecture
-- **Unit Tests**: Test utilities (parse_card, find_deck) and CLI parsing with mocks
+- **Unit Tests**: Test utilities (parse_card, find_deck, validate_deck_file) and CLI parsing with mocks
 - **Integration Tests**: Marked with `@pytest.mark.integration`, test live API operations
 - **Mocking**: Uses `unittest.mock` and `pytest-mock` for external API calls
 - **Fixtures**: Reusable test data (sample_decks, sample_cards) defined in test_main.py
-- **Test Organization**: Tests grouped by functionality in classes (TestParseCard, TestFindDeck, TestCRUDOperations, etc.)
+- **Test Organization**: Tests grouped by functionality in classes (TestParseCard, TestFindDeck, TestValidation, TestCRUDOperations, etc.)
 
 Integration tests require `TEST_DECK_ID` environment variable and are skipped by default.
 
