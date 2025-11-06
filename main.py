@@ -708,28 +708,28 @@ def push(file_path, force=False):
 
 
 def get_embedding(text, client):
-    """Generate embedding for text using OpenAI API.
+    """Generate embedding for text using OpenRouter API.
 
     Args:
         text: Text to embed
-        client: OpenAI client instance
+        client: OpenAI client instance configured for OpenRouter
 
     Returns:
         List of floats representing the embedding vector
     """
     response = client.embeddings.create(
-        model="text-embedding-3-small",
+        model="openai/text-embedding-3-small",
         input=text
     )
     return response.data[0].embedding
 
 
 def get_embeddings_batch(texts, client, batch_size=100):
-    """Generate embeddings for multiple texts using OpenAI API.
+    """Generate embeddings for multiple texts using OpenRouter API.
 
     Args:
         texts: List of texts to embed
-        client: OpenAI client instance
+        client: OpenAI client instance configured for OpenRouter
         batch_size: Number of texts to process per API call (default: 100)
 
     Returns:
@@ -741,7 +741,7 @@ def get_embeddings_batch(texts, client, batch_size=100):
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         response = client.embeddings.create(
-            model="text-embedding-3-small",
+            model="openai/text-embedding-3-small",
             input=batch
         )
         # Extract embeddings in the same order as input
@@ -876,8 +876,11 @@ def dedupe(file_path, threshold=0.85):
         print("Not enough cards to deduplicate (need at least 2)")
         return
 
-    # Initialize OpenAI client for embeddings
-    embedding_client = OpenAI(api_key=OPENAI_API_KEY)
+    # Initialize OpenRouter client for embeddings
+    embedding_client = OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1"
+    )
 
     # Initialize OpenRouter client for classification
     classification_client = OpenAI(
@@ -1108,8 +1111,7 @@ def main():
         push(args.file_path, force=args.force)
 
     elif args.command == "dedupe":
-        # Load API keys for dedupe command
-        OPENAI_API_KEY = get_openai_api_key()
+        # Load API key for dedupe command
         OPENROUTER_API_KEY = get_openrouter_api_key()
         dedupe(args.file_path, threshold=args.threshold)
 
