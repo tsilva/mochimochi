@@ -237,8 +237,18 @@ def extract_deck_id_from_filename(file_path):
     if len(parts) == 1:
         return None
 
-    # Last part is the deck ID
-    return parts[-1]
+    # Check if last part looks like a valid deck ID:
+    # - Must be exactly 8 alphanumeric characters
+    # - Must have mixed case (real Mochi IDs use base62-like encoding with upper+lower case)
+    potential_deck_id = parts[-1]
+    if len(potential_deck_id) == 8 and potential_deck_id.isalnum():
+        has_upper = any(c.isupper() for c in potential_deck_id)
+        has_lower = any(c.islower() for c in potential_deck_id)
+        if has_upper and has_lower:
+            return potential_deck_id
+
+    # Otherwise, it's part of the deck name (new deck)
+    return None
 
 
 def parse_markdown_cards(markdown_text):
@@ -740,13 +750,13 @@ def push(file_path, force=False):
 
     for card in to_create:
         content = f"{card['question']}\n---\n{card['answer']}"
-        kwargs = {'content': content}
+        kwargs = {}
         if card['tags']:
             kwargs['tags'] = card['tags']
         if card['archived']:
-            kwargs['archived'] = True
+            kwargs['archived?'] = True
 
-        created = create_card(deck_id, **kwargs)
+        created = create_card(deck_id, content, **kwargs)
         print(f"  ✓ Created {created['id']}: {card['question'][:50]}...")
         created_count += 1
 
@@ -759,7 +769,7 @@ def push(file_path, force=False):
         if card['tags']:
             kwargs['tags'] = card['tags']
         if card.get('archived'):
-            kwargs['archived'] = True
+            kwargs['archived?'] = True
 
         update_card(card['card_id'], **kwargs)
         print(f"  ✓ Updated {card['card_id']}: {card['question'][:50]}...")

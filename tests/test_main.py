@@ -262,7 +262,7 @@ class TestValidation:
 
     def test_validate_deck_file_valid(self, tmp_path):
         """Test validating a valid deck file."""
-        deck_file = tmp_path / "deck-test-abc123.md"
+        deck_file = tmp_path / "deck-test-Abc12345.md"
         deck_file.write_text("""---
 card_id: card1
 tags: ["python"]
@@ -282,7 +282,7 @@ Machine Learning
         assert len(cards) == 2
         assert cards[0]['question'] == 'What is Python?'
         assert cards[1]['question'] == 'What is ML?'
-        assert deck_id == 'abc123'
+        assert deck_id == 'Abc12345'
 
     def test_validate_deck_file_not_found(self, tmp_path):
         """Test validation fails for non-existent file."""
@@ -372,7 +372,7 @@ This has a question
 
     def test_validate_deck_file_multiple_cards(self, tmp_path):
         """Test validation succeeds with multiple valid cards."""
-        deck_file = tmp_path / "deck-multi-abc123.md"
+        deck_file = tmp_path / "deck-multi-Abc12345.md"
         deck_file.write_text("""---
 card_id: card1
 tags: ["tag1", "tag2"]
@@ -400,7 +400,7 @@ Answer 3
         assert len(cards) == 3
         assert all('question' in card for card in cards)
         assert all('answer' in card for card in cards)
-        assert deck_id == 'abc123'
+        assert deck_id == 'Abc12345'
 
     def test_validate_deck_file_new_deck(self, tmp_path):
         """Test validating a new deck file (without deck ID)."""
@@ -432,10 +432,10 @@ class TestExtractDeckId:
 
     def test_extract_deck_id_valid(self, tmp_path):
         """Test extracting deck ID from valid filename."""
-        deck_file = tmp_path / "deck-mytest-abc123.md"
+        deck_file = tmp_path / "deck-mytest-Abc12345.md"
         deck_file.touch()
         deck_id = main.extract_deck_id_from_filename(deck_file)
-        assert deck_id == 'abc123'
+        assert deck_id == 'Abc12345'
 
     def test_extract_deck_id_new_deck(self, tmp_path):
         """Test extracting deck ID from new deck filename (no ID)."""
@@ -446,10 +446,10 @@ class TestExtractDeckId:
 
     def test_extract_deck_id_hyphenated_name(self, tmp_path):
         """Test extracting deck ID from filename with hyphens in name."""
-        deck_file = tmp_path / "deck-my-cool-deck-xyz789.md"
+        deck_file = tmp_path / "deck-my-cool-deck-Xyz78901.md"
         deck_file.touch()
         deck_id = main.extract_deck_id_from_filename(deck_file)
-        assert deck_id == 'xyz789'
+        assert deck_id == 'Xyz78901'
 
     def test_extract_deck_id_invalid_no_prefix(self, tmp_path):
         """Test error for filename without deck- prefix."""
@@ -466,6 +466,20 @@ class TestExtractDeckId:
         with pytest.raises(ValueError) as exc_info:
             main.extract_deck_id_from_filename(deck_file)
         assert "Expected: deck-" in str(exc_info.value)
+
+    def test_extract_deck_id_multi_hyphen_new_deck(self, tmp_path):
+        """Test multi-hyphenated name without valid deck ID is treated as new deck."""
+        deck_file = tmp_path / "deck-aiml-fundamentals.md"
+        deck_file.touch()
+        deck_id = main.extract_deck_id_from_filename(deck_file)
+        assert deck_id is None
+
+    def test_extract_deck_id_lowercase_word_new_deck(self, tmp_path):
+        """Test 8-letter lowercase word is treated as new deck (not a valid deck ID)."""
+        deck_file = tmp_path / "deck-aiml-networks.md"
+        deck_file.touch()
+        deck_id = main.extract_deck_id_from_filename(deck_file)
+        assert deck_id is None
 
 
 if __name__ == '__main__':
