@@ -7,7 +7,7 @@ name = "mochi-mochi"
 version = "0.1.0"
 description = "CLI tool for managing Mochi flashcards with local-first sync"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [
     {name = "tsilva"}
@@ -29,6 +29,8 @@ classifiers = [
 dependencies = [
     "requests>=2.25.0",
     "openai>=1.0.0",
+    "numpy>=1.20.0",
+    "faiss-cpu>=1.7.0",
 ]
 
 [project.urls]

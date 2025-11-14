@@ -32,6 +32,14 @@ from pathlib import Path
 from datetime import datetime
 from openai import OpenAI
 
+# Optional dependencies for deduplication
+try:
+    import numpy as np
+    import faiss
+    HAS_FAISS = True
+except ImportError:
+    HAS_FAISS = False
+
 BASE_URL = "https://app.mochi.cards/api"
 
 # Config file location
@@ -1062,7 +1070,10 @@ def cosine_similarity(vec1, vec2):
 
 
 def find_duplicate_pairs(cards, threshold=0.85):
-    """Find pairs of similar cards using embeddings.
+    """Find pairs of similar cards using FAISS for scalable similarity search.
+
+    Uses GPU acceleration if available, falls back to CPU, then brute force.
+    Complexity: O(n log n) with FAISS vs O(n²) with brute force.
 
     Args:
         cards: List of card dicts with embeddings
@@ -1071,14 +1082,73 @@ def find_duplicate_pairs(cards, threshold=0.85):
     Returns:
         List of tuples: (card1_idx, card2_idx, similarity_score)
     """
-    pairs = []
     n = len(cards)
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            similarity = cosine_similarity(cards[i]['embedding'], cards[j]['embedding'])
-            if similarity >= threshold:
-                pairs.append((i, j, similarity))
+    # Use FAISS if available, otherwise fall back to brute force
+    if HAS_FAISS:
+        # Convert embeddings to numpy array
+        embeddings = np.array([card['embedding'] for card in cards]).astype('float32')
+        d = embeddings.shape[1]  # Dimension of embeddings
+
+        # Normalize for cosine similarity (so inner product = cosine similarity)
+        faiss.normalize_L2(embeddings)
+
+        # Try to use GPU if available
+        use_gpu = False
+        try:
+            if faiss.get_num_gpus() > 0:
+                # Move index to GPU
+                res = faiss.StandardGpuResources()
+                index = faiss.GpuIndexFlatIP(res, d)
+                use_gpu = True
+                print(f"  Using FAISS GPU for similarity search ({n} cards)")
+            else:
+                # CPU fallback
+                index = faiss.IndexFlatIP(d)
+                print(f"  Using FAISS CPU for similarity search ({n} cards)")
+        except (AttributeError, RuntimeError):
+            # GPU not available or not compiled with GPU support
+            index = faiss.IndexFlatIP(d)
+            print(f"  Using FAISS CPU for similarity search ({n} cards)")
+
+        # Add vectors to index
+        index.add(embeddings)
+
+        # Search for similar cards
+        # k = number of nearest neighbors to find per card (including self)
+        # We search for top min(100, n) to avoid checking all n pairs for large datasets
+        k = min(100, n)
+        similarities, indices = index.search(embeddings, k)
+
+        # Extract pairs above threshold
+        pairs = []
+        seen = set()
+
+        for i in range(n):
+            for j_idx in range(1, k):  # Skip j_idx=0 (self-match)
+                if j_idx >= len(indices[i]):
+                    break
+
+                j = indices[i][j_idx]
+                score = similarities[i][j_idx]
+
+                # Only add if above threshold and i < j (avoid duplicates)
+                if score >= threshold and i < j:
+                    pair_key = (min(i, j), max(i, j))
+                    if pair_key not in seen:
+                        pairs.append((i, j, float(score)))
+                        seen.add(pair_key)
+
+    else:
+        # Brute force fallback when FAISS not available (shouldn't happen in normal installs)
+        print(f"  Using brute force similarity search ({n} cards)")
+        pairs = []
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                similarity = cosine_similarity(cards[i]['embedding'], cards[j]['embedding'])
+                if similarity >= threshold:
+                    pairs.append((i, j, similarity))
 
     # Sort by similarity descending
     pairs.sort(key=lambda x: x[2], reverse=True)
@@ -1146,25 +1216,48 @@ Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing
         return 'error', f"LLM request failed: {str(e)[:100]}"
 
 
-def dedupe(file_path, threshold=0.85):
-    """Find and remove duplicate cards from deck file using semantic similarity.
+def dedupe(file_path=None, threshold=0.85):
+    """Find and remove duplicate cards from deck file(s) using semantic similarity.
 
     Args:
-        file_path: Path to deck file (<deck-name>-<deck_id>.md)
+        file_path: Path to deck file (<deck-name>-<deck_id>.md). If None, dedupes across all deck files in current directory
         threshold: Similarity threshold for duplicates (default: 0.85)
     """
-    local_file = Path(file_path)
+    # Load cards from single file or all files
+    if file_path:
+        local_file = Path(file_path)
+        if not local_file.exists():
+            print(f"Error: {local_file} not found")
+            return
 
-    if not local_file.exists():
-        print(f"Error: {local_file} not found")
-        return
+        print(f"Loading cards from {local_file}...")
+        deck_files = [local_file]
+    else:
+        # Load all deck files
+        deck_files = find_deck_files()
+        if not deck_files:
+            print("Error: No deck files found in current directory")
+            print("Deck files must match pattern: deck-*.md")
+            return
 
-    print(f"Loading cards from {local_file}...")
-    cards = parse_markdown_cards(local_file.read_text())
+        print(f"Loading cards from {len(deck_files)} deck file(s)...")
+        for deck_file in deck_files:
+            print(f"  - {deck_file.name}")
 
-    if len(cards) < 2:
+    # Load all cards and track their source file
+    all_cards = []
+    for deck_file in deck_files:
+        cards = parse_markdown_cards(deck_file.read_text())
+        for card in cards:
+            card['source_file'] = deck_file
+        all_cards.extend(cards)
+
+    if len(all_cards) < 2:
         print("Not enough cards to deduplicate (need at least 2)")
         return
+
+    print(f"\nTotal cards loaded: {len(all_cards)}")
+    cards = all_cards
 
     # Initialize OpenRouter client for embeddings
     embedding_client = OpenAI(
@@ -1229,7 +1322,9 @@ def dedupe(file_path, threshold=0.85):
             card1, card2 = cards[p['i']], cards[p['j']]
             q1_preview = card1['question'][:40] + '...' if len(card1['question']) > 40 else card1['question']
             q2_preview = card2['question'][:40] + '...' if len(card2['question']) > 40 else card2['question']
-            print(f"  • {q1_preview} ↔ {q2_preview}")
+            file1 = f" [{card1['source_file'].name}]" if card1.get('source_file') else ""
+            file2 = f" [{card2['source_file'].name}]" if card2.get('source_file') else ""
+            print(f"  • {q1_preview}{file1} ↔ {q2_preview}{file2}")
             print(f"    Reason: {p['reasoning'][:70]}...")
         if len(complementary_pairs) > 5:
             print(f"  ... and {len(complementary_pairs) - 5} more")
@@ -1271,11 +1366,15 @@ def dedupe(file_path, threshold=0.85):
         print(f"    A: {card1['answer'][:100]}{'...' if len(card1['answer']) > 100 else ''}")
         if card1['card_id']:
             print(f"    ID: {card1['card_id']}")
+        if card1.get('source_file'):
+            print(f"    File: {card1['source_file'].name}")
         print(f"\n[2] Card 2:")
         print(f"    Q: {card2['question'][:100]}{'...' if len(card2['question']) > 100 else ''}")
         print(f"    A: {card2['answer'][:100]}{'...' if len(card2['answer']) > 100 else ''}")
         if card2['card_id']:
             print(f"    ID: {card2['card_id']}")
+        if card2.get('source_file'):
+            print(f"    File: {card2['source_file'].name}")
 
         print("\nOptions:")
         print("  1 - Keep card 1, remove card 2")
@@ -1317,25 +1416,50 @@ def dedupe(file_path, threshold=0.85):
     print("-" * 70)
     for idx in sorted(cards_to_remove):
         card = cards[idx]
-        print(f"  - {card['question'][:60]}{'...' if len(card['question']) > 60 else ''}")
+        file_info = f" ({card['source_file'].name})" if card.get('source_file') else ""
+        print(f"  - {card['question'][:60]}{'...' if len(card['question']) > 60 else ''}{file_info}")
 
     response = input("\nProceed with removal? [y/N]: ").lower().strip()
     if response not in ('y', 'yes'):
         print("Aborted")
         return
 
-    # Remove duplicates and write back to file
-    cards_to_keep = [card for i, card in enumerate(cards) if i not in cards_to_remove]
+    # Group cards by source file for efficient writing
+    cards_by_file = {}
+    for i, card in enumerate(cards):
+        if i not in cards_to_remove:
+            source_file = card.get('source_file', deck_files[0])  # Fallback to first file for single-file mode
+            if source_file not in cards_by_file:
+                cards_by_file[source_file] = []
+            cards_by_file[source_file].append(card)
 
-    with local_file.open('w', encoding='utf-8') as f:
-        for card in cards_to_keep:
-            # Remove embedding before writing (not needed in file)
-            card.pop('embedding', None)
-            f.write(format_card_to_markdown(card) + '\n')
+    # Write back to each modified file
+    files_modified = set()
+    for deck_file in deck_files:
+        cards_to_keep = cards_by_file.get(deck_file, [])
+
+        # Check if any cards were removed from this file
+        original_cards = [c for c in cards if c.get('source_file') == deck_file]
+        if len(cards_to_keep) < len(original_cards):
+            files_modified.add(deck_file)
+
+            with deck_file.open('w', encoding='utf-8') as f:
+                for card in cards_to_keep:
+                    # Remove temporary fields before writing
+                    card.pop('embedding', None)
+                    card.pop('source_file', None)
+                    f.write(format_card_to_markdown(card) + '\n')
 
     print(f"\n✓ Removed {len(cards_to_remove)} duplicate(s)")
-    print(f"✓ {len(cards_to_keep)} cards remaining in {local_file}")
-    print(f"\nTip: Review changes with: git diff {local_file.name}")
+    print(f"✓ Modified {len(files_modified)} file(s):")
+    for deck_file in sorted(files_modified):
+        remaining = len(cards_by_file.get(deck_file, []))
+        print(f"   - {deck_file.name} ({remaining} cards remaining)")
+
+    if len(deck_files) == 1:
+        print(f"\nTip: Review changes with: git diff {deck_files[0].name}")
+    else:
+        print(f"\nTip: Review changes with: git diff")
 
 
 def find_deck(decks, deck_name=None, deck_id=None):
@@ -1372,7 +1496,7 @@ def parse_args():
                             help="Skip duplicate detection")
 
     dedupe_parser = subparsers.add_parser("dedupe", help="Find and remove duplicate cards using semantic similarity")
-    dedupe_parser.add_argument("file_path", help="Path to deck file (e.g., deck-python-abc123.md)")
+    dedupe_parser.add_argument("file_path", nargs='?', help="Path to deck file (e.g., deck-python-abc123.md). If omitted, dedupes across all deck-*.md files in current directory")
     dedupe_parser.add_argument("--threshold", type=float, default=0.85,
                               help="Similarity threshold (0.0-1.0, default: 0.85)")
 
@@ -1467,7 +1591,7 @@ def main():
     elif args.command == "dedupe":
         # Load API key for dedupe command
         OPENROUTER_API_KEY = get_openrouter_api_key()
-        dedupe(args.file_path, threshold=args.threshold)
+        dedupe(file_path=args.file_path, threshold=args.threshold)
 
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
