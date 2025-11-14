@@ -49,10 +49,12 @@ CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
 CACHE_DIR = Path.home() / ".mochi-mochi" / "cache"
 EMBEDDING_CACHE_FILE = CACHE_DIR / "embeddings.json"
 CLASSIFICATION_CACHE_FILE = CACHE_DIR / "classifications.json"
+GRADING_CACHE_FILE = CACHE_DIR / "gradings.json"
 
-# Models for deduplication
+# Models for deduplication and curation
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
 LLM_CLASSIFICATION_MODEL = "google/gemini-2.5-flash"
+CURATION_MODEL = "google/gemini-2.5-flash"
 
 # Classification prompt template
 CLASSIFICATION_PROMPT_TEMPLATE = """Compare these two flashcards and classify their relationship:
@@ -76,6 +78,56 @@ Respond with EXACTLY this format:
 classification | reasoning (one line explanation)
 
 Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing X - opposite scenarios of same concept"""
+
+# Quality grading prompt template
+QUALITY_GRADING_PROMPT_TEMPLATE = """Evaluate this flashcard against quality standards and assign a quality score from 0 to 10.
+
+Card:
+Q: {question}
+A: {answer}
+
+Quality Standards:
+1. **Clarity**: Question and answer should be clear, unambiguous, and easy to understand
+2. **Conciseness**: Avoid unnecessary words; be direct and focused
+3. **Accuracy**: Information must be factually correct
+4. **Completeness**: Answer should fully address the question without being excessive
+5. **Atomic**: Each card should test ONE concept (no compound questions)
+6. **Context-Independence**: Card should be understandable without external context
+7. **Active Recall**: Question should trigger active retrieval, not passive recognition
+8. **No Hints**: Question should not contain hints about the answer
+9. **Proper Formatting**: Use clear structure, bullet points where appropriate
+10. **No Redundancy**: Avoid repeating information between question and answer
+
+Respond with EXACTLY this format:
+score | reasoning
+
+Example: 7 | Question is clear but answer is too verbose and contains redundant information from the question"""
+
+# Card improvement prompt template
+CARD_IMPROVEMENT_PROMPT_TEMPLATE = """Improve this flashcard to meet quality standards. Current quality score: {score}/10
+
+Current Card:
+Q: {question}
+A: {answer}
+
+Issues identified: {reasoning}
+
+Quality Standards:
+1. **Clarity**: Question and answer should be clear, unambiguous, and easy to understand
+2. **Conciseness**: Avoid unnecessary words; be direct and focused
+3. **Accuracy**: Information must be factually correct
+4. **Completeness**: Answer should fully address the question without being excessive
+5. **Atomic**: Each card should test ONE concept (no compound questions)
+6. **Context-Independence**: Card should be understandable without external context
+7. **Active Recall**: Question should trigger active retrieval, not passive recognition
+8. **No Hints**: Question should not contain hints about the answer
+9. **Proper Formatting**: Use clear structure, bullet points where appropriate
+10. **No Redundancy**: Avoid repeating information between question and answer
+
+Generate an improved version that addresses the issues. Respond with EXACTLY this format:
+QUESTION: <improved question>
+---
+ANSWER: <improved answer>"""
 
 # Global API key (set in main())
 API_KEY = None
@@ -300,6 +352,39 @@ def save_classification_cache(cache):
         print(f"Warning: Failed to save classification cache: {e}")
 
 
+def load_grading_cache():
+    """Load quality grading cache from disk.
+
+    Returns:
+        dict: Cache mapping request_hash -> (score, reasoning) tuple
+    """
+    if not GRADING_CACHE_FILE.exists():
+        return {}
+
+    try:
+        with open(GRADING_CACHE_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load grading cache: {e}")
+        return {}
+
+
+def save_grading_cache(cache):
+    """Save quality grading cache to disk.
+
+    Args:
+        cache: Dict mapping request_hash -> (score, reasoning) tuple
+    """
+    try:
+        # Create cache directory if it doesn't exist
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        with open(GRADING_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Failed to save grading cache: {e}")
+
+
 def parse_card(content):
     """Parse card content into question and answer."""
     q, _, a = content.partition('---')
@@ -350,6 +435,26 @@ def classification_cache_key(card1_question, card1_answer, card2_question, card2
     # Hash the entire request: model + prompt + both cards
     # Use consistent ordering to ensure same pair gets same key regardless of order
     key_input = f"{model}||{prompt}||{card1_question}||{card1_answer}||{card2_question}||{card2_answer}"
+    return hashlib.sha256(key_input.encode('utf-8')).hexdigest()[:16]
+
+
+def grading_cache_key(question, answer, prompt, model=None):
+    """Generate cache key for quality grading that includes model, prompt, and card content.
+
+    Args:
+        question: Question text of card
+        answer: Answer text of card
+        prompt: The prompt template used for grading
+        model: LLM model name (defaults to CURATION_MODEL)
+
+    Returns:
+        Cache key string: hash of (model + prompt + question + answer)
+    """
+    if model is None:
+        model = CURATION_MODEL
+
+    # Hash the entire request: model + prompt + card content
+    key_input = f"{model}||{prompt}||{question}||{answer}"
     return hashlib.sha256(key_input.encode('utf-8')).hexdigest()[:16]
 
 
@@ -1365,6 +1470,128 @@ def classify_duplicate_pair(card1, card2, client, classification_cache=None):
         return error_result
 
 
+def grade_card(card, client, grading_cache=None):
+    """Grade a flashcard for quality using LLM.
+
+    Args:
+        card: Card dict with question and answer
+        client: OpenAI-compatible client (configured for OpenRouter)
+        grading_cache: Optional cache dict to store/retrieve results
+
+    Returns:
+        tuple: (score, reasoning, cache_hit)
+        score: Quality score from 0-10 (int)
+        reasoning: Explanation from LLM
+        cache_hit: Boolean indicating if result was from cache
+    """
+    prompt = QUALITY_GRADING_PROMPT_TEMPLATE.format(
+        question=card['question'],
+        answer=card['answer']
+    )
+
+    # Check cache first
+    cache_key = None
+    if grading_cache is not None:
+        cache_key = grading_cache_key(
+            card['question'], card['answer'], prompt
+        )
+        if cache_key in grading_cache:
+            # Return cached result (stored as [score, reasoning])
+            cached = grading_cache[cache_key]
+            return cached[0], cached[1], True  # cache_hit = True
+
+    try:
+        response = client.chat.completions.create(
+            model=CURATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=1024
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse response: "score | reasoning"
+        if '|' not in result:
+            score = 5  # Default middle score if format is invalid
+            reasoning = f"LLM response format invalid: {result[:50]}"
+        else:
+            score_str, _, reasoning = result.partition('|')
+            reasoning = reasoning.strip()
+
+            try:
+                score = int(score_str.strip())
+                # Clamp score to 0-10 range
+                score = max(0, min(10, score))
+            except ValueError:
+                score = 5
+                reasoning = f"Invalid score format: {score_str.strip()}"
+
+        # Store in cache
+        if grading_cache is not None and cache_key is not None:
+            grading_cache[cache_key] = [score, reasoning]
+
+        return score, reasoning, False  # cache_hit = False
+
+    except Exception as e:
+        error_result = (5, f"LLM request failed: {str(e)[:100]}", False)
+        # Don't cache errors
+        return error_result
+
+
+def improve_card(card, score, reasoning, client):
+    """Generate improved version of a flashcard using LLM.
+
+    Args:
+        card: Card dict with question and answer
+        score: Current quality score (0-10)
+        reasoning: Issues identified by grading
+        client: OpenAI-compatible client (configured for OpenRouter)
+
+    Returns:
+        tuple: (improved_question, improved_answer)
+        Returns None, None on error
+    """
+    prompt = CARD_IMPROVEMENT_PROMPT_TEMPLATE.format(
+        score=score,
+        question=card['question'],
+        answer=card['answer'],
+        reasoning=reasoning
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=CURATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,  # Slightly creative for improvements
+            max_tokens=2048
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse response: "QUESTION: ...\n---\nANSWER: ..."
+        if 'QUESTION:' not in result or '---' not in result or 'ANSWER:' not in result:
+            print(f"  Warning: Invalid improvement format")
+            return None, None
+
+        # Extract question and answer
+        parts = result.split('---', 1)
+        if len(parts) != 2:
+            return None, None
+
+        question_part = parts[0].strip()
+        answer_part = parts[1].strip()
+
+        # Remove "QUESTION:" and "ANSWER:" prefixes
+        improved_question = question_part.replace('QUESTION:', '', 1).strip()
+        improved_answer = answer_part.replace('ANSWER:', '', 1).strip()
+
+        return improved_question, improved_answer
+
+    except Exception as e:
+        print(f"  Error improving card: {str(e)[:100]}")
+        return None, None
+
+
 def dedupe(file_path=None, threshold=0.85):
     """Find and remove duplicate cards from deck file(s) using semantic similarity.
 
@@ -1660,6 +1887,188 @@ def dedupe(file_path=None, threshold=0.85):
         print(f"\nTip: Review changes with: git diff")
 
 
+def curate(file_path=None, threshold=8):
+    """Curate card content to meet quality standards.
+
+    Grades each card for quality (0-10), then improves cards below threshold.
+
+    Args:
+        file_path: Path to deck file (<deck-name>-<deck_id>.md). If None, curates all deck files in current directory
+        threshold: Minimum quality score to keep unchanged (default: 8)
+    """
+    # Load cards from single file or all files
+    if file_path:
+        local_file = Path(file_path)
+        if not local_file.exists():
+            print(f"Error: {local_file} not found")
+            return
+
+        print(f"Loading cards from {local_file}...")
+        deck_files = [local_file]
+    else:
+        # Load all deck files
+        deck_files = find_deck_files()
+        if not deck_files:
+            print("Error: No deck files found in current directory")
+            print("Deck files must match pattern: deck-*.md")
+            return
+
+        print(f"Loading cards from {len(deck_files)} deck file(s)...")
+        for deck_file in deck_files:
+            print(f"  - {deck_file.name}")
+
+    # Load all cards and track their source file
+    all_cards = []
+    for deck_file in deck_files:
+        cards = parse_markdown_cards(deck_file.read_text())
+        for card in cards:
+            card['source_file'] = deck_file
+        all_cards.extend(cards)
+
+    if not all_cards:
+        print("No cards found")
+        return
+
+    print(f"\nTotal cards loaded: {len(all_cards)}")
+    cards = all_cards
+
+    # Initialize OpenRouter client
+    curation_client = OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1"
+    )
+
+    # Load grading cache
+    print("Loading grading cache...")
+    grading_cache = load_grading_cache()
+    grading_cache_hits = 0
+    grading_cache_misses = 0
+
+    # Grade all cards
+    print(f"\nGrading {len(cards)} card(s) for quality...")
+    cards_needing_improvement = []
+
+    for idx, card in enumerate(cards, 1):
+        score, reasoning, cache_hit = grade_card(card, curation_client, grading_cache)
+
+        if cache_hit:
+            grading_cache_hits += 1
+        else:
+            grading_cache_misses += 1
+
+        card['quality_score'] = score
+        card['quality_reasoning'] = reasoning
+
+        if score < threshold:
+            cards_needing_improvement.append(card)
+
+        print(f"  {idx}/{len(cards)} graded (score: {score}/10)", end='\r')
+
+    # Save grading cache
+    if grading_cache_misses > 0:
+        print(f"\n  Saving {grading_cache_misses} new grading(s) to cache...")
+        save_grading_cache(grading_cache)
+
+    print(f"  Grading cache: {grading_cache_hits} hits, {grading_cache_misses} misses")
+
+    # Show score distribution
+    score_counts = {}
+    for card in cards:
+        score = card['quality_score']
+        score_counts[score] = score_counts.get(score, 0) + 1
+
+    print(f"\n✓ Grading complete")
+    print(f"  Cards needing improvement (< {threshold}): {len(cards_needing_improvement)}")
+    print(f"  Cards meeting standards (>= {threshold}): {len(cards) - len(cards_needing_improvement)}")
+
+    if not cards_needing_improvement:
+        print("\n✓ All cards meet quality standards!")
+        return
+
+    # Show cards needing improvement
+    print(f"\n{len(cards_needing_improvement)} card(s) below quality threshold:\n")
+    for idx, card in enumerate(cards_needing_improvement[:5], 1):  # Show first 5
+        q_preview = card['question'][:60] + '...' if len(card['question']) > 60 else card['question']
+        file_info = f" [{card['source_file'].name}]" if card.get('source_file') else ""
+        print(f"  {idx}. Score {card['quality_score']}/10: {q_preview}{file_info}")
+        print(f"     Issue: {card['quality_reasoning'][:80]}...")
+
+    if len(cards_needing_improvement) > 5:
+        print(f"  ... and {len(cards_needing_improvement) - 5} more")
+
+    # Ask user if they want to proceed with improvements
+    print()
+    response = input(f"Improve {len(cards_needing_improvement)} card(s)? [y/N]: ").lower().strip()
+    if response not in ('y', 'yes'):
+        print("Aborted")
+        return
+
+    # Improve cards below threshold
+    print(f"\nImproving {len(cards_needing_improvement)} card(s)...")
+    improved_count = 0
+    failed_count = 0
+
+    for idx, card in enumerate(cards_needing_improvement, 1):
+        print(f"  {idx}/{len(cards_needing_improvement)} improving...", end='\r')
+
+        improved_q, improved_a = improve_card(
+            card, card['quality_score'], card['quality_reasoning'], curation_client
+        )
+
+        if improved_q and improved_a:
+            # Update card with improved content
+            card['question'] = improved_q
+            card['answer'] = improved_a
+            # Update content hash for the improved card
+            card['content_hash'] = content_hash(improved_q, improved_a)
+            improved_count += 1
+        else:
+            failed_count += 1
+
+    print(f"\n✓ Improved {improved_count} card(s), {failed_count} failed")
+
+    # Group cards by source file for efficient writing
+    cards_by_file = {}
+    for card in cards:
+        source_file = card.get('source_file', deck_files[0])  # Fallback to first file for single-file mode
+        if source_file not in cards_by_file:
+            cards_by_file[source_file] = []
+        cards_by_file[source_file].append(card)
+
+    # Write back to each modified file
+    files_modified = set()
+    for deck_file in deck_files:
+        cards_to_write = cards_by_file.get(deck_file, [])
+
+        if not cards_to_write:
+            continue
+
+        # Check if any cards from this file were improved
+        file_cards = [c for c in cards if c.get('source_file') == deck_file]
+        file_improved = [c for c in file_cards if c in cards_needing_improvement]
+
+        if file_improved:
+            files_modified.add(deck_file)
+
+            with deck_file.open('w', encoding='utf-8') as f:
+                for card in cards_to_write:
+                    # Remove temporary fields before writing
+                    card.pop('quality_score', None)
+                    card.pop('quality_reasoning', None)
+                    card.pop('source_file', None)
+                    f.write(format_card_to_markdown(card) + '\n')
+
+    print(f"\n✓ Updated {len(files_modified)} file(s):")
+    for deck_file in sorted(files_modified):
+        card_count = len(cards_by_file.get(deck_file, []))
+        print(f"   - {deck_file.name} ({card_count} cards)")
+
+    if len(deck_files) == 1:
+        print(f"\nTip: Review changes with: git diff {deck_files[0].name}")
+    else:
+        print(f"\nTip: Review changes with: git diff")
+
+
 def find_deck(decks, deck_name=None, deck_id=None):
     """Find a deck by name or ID (partial match supported)."""
     if deck_id:
@@ -1697,6 +2106,11 @@ def parse_args():
     dedupe_parser.add_argument("file_path", nargs='?', help="Path to deck file (e.g., deck-python-abc123.md). If omitted, dedupes across all deck-*.md files in current directory")
     dedupe_parser.add_argument("--threshold", type=float, default=0.85,
                               help="Similarity threshold (0.0-1.0, default: 0.85)")
+
+    curate_parser = subparsers.add_parser("curate", help="Grade and improve card quality using LLM")
+    curate_parser.add_argument("file_path", nargs='?', help="Path to deck file (e.g., deck-python-abc123.md). If omitted, curates all deck-*.md files in current directory")
+    curate_parser.add_argument("--threshold", type=int, default=8,
+                              help="Minimum quality score (0-10) to keep unchanged (default: 8)")
 
     return parser.parse_args()
 
@@ -1790,6 +2204,11 @@ def main():
         # Load API key for dedupe command
         OPENROUTER_API_KEY = get_openrouter_api_key()
         dedupe(file_path=args.file_path, threshold=args.threshold)
+
+    elif args.command == "curate":
+        # Load API key for curate command
+        OPENROUTER_API_KEY = get_openrouter_api_key()
+        curate(file_path=args.file_path, threshold=args.threshold)
 
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
