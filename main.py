@@ -1903,6 +1903,8 @@ def dedupe(file_path=None, threshold=0.85):
 
     # Classify pairs with LLM in parallel batches
     async def classify_pairs_async():
+        nonlocal classification_cache_hits, classification_cache_misses
+
         # Initialize async OpenRouter client for classification
         async_client = AsyncOpenAI(
             api_key=OPENROUTER_API_KEY,
@@ -1928,6 +1930,13 @@ def dedupe(file_path=None, threshold=0.85):
             # Wait for all tasks in this batch to complete
             for i, j, score, task in tasks:
                 classification, reasoning, cache_hit = await task
+
+                # Track cache hits/misses during classification
+                if cache_hit:
+                    classification_cache_hits += 1
+                else:
+                    classification_cache_misses += 1
+
                 classified_pairs.append({
                     'i': i,
                     'j': j,
@@ -1943,24 +1952,6 @@ def dedupe(file_path=None, threshold=0.85):
 
     # Run async classification
     classified_pairs = asyncio.run(classify_pairs_async())
-
-    # Count cache hits/misses
-    for pair in classified_pairs:
-        prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(
-            q1=cards[pair['i']]['question'],
-            a1=cards[pair['i']]['answer'],
-            q2=cards[pair['j']]['question'],
-            a2=cards[pair['j']]['answer']
-        )
-        cache_key = classification_cache_key(
-            cards[pair['i']]['question'], cards[pair['i']]['answer'],
-            cards[pair['j']]['question'], cards[pair['j']]['answer'],
-            prompt
-        )
-        if cache_key in classification_cache:
-            classification_cache_hits += 1
-        else:
-            classification_cache_misses += 1
 
     # Save classification cache
     if classification_cache_misses > 0:
@@ -2177,6 +2168,8 @@ def curate(file_path=None, threshold=8):
     cards_needing_improvement = []
 
     async def grade_cards_async():
+        nonlocal grading_cache_hits, grading_cache_misses
+
         # Initialize async OpenRouter client
         async_client = AsyncOpenAI(
             api_key=OPENROUTER_API_KEY,
@@ -2202,6 +2195,12 @@ def curate(file_path=None, threshold=8):
                 card['quality_score'] = score
                 card['quality_reasoning'] = reasoning
 
+                # Track cache hits/misses during grading
+                if cache_hit:
+                    grading_cache_hits += 1
+                else:
+                    grading_cache_misses += 1
+
                 if score < threshold:
                     cards_needing_improvement.append(card)
 
@@ -2211,18 +2210,6 @@ def curate(file_path=None, threshold=8):
 
     # Run async grading
     asyncio.run(grade_cards_async())
-
-    # Count cache hits/misses
-    for card in cards:
-        prompt = QUALITY_GRADING_PROMPT_TEMPLATE.format(
-            question=card['question'],
-            answer=card['answer']
-        )
-        cache_key = grading_cache_key(card['question'], card['answer'], prompt)
-        if cache_key in grading_cache:
-            grading_cache_hits += 1
-        else:
-            grading_cache_misses += 1
 
     # Save grading cache
     if grading_cache_misses > 0:
