@@ -45,6 +45,13 @@ BASE_URL = "https://app.mochi.cards/api"
 # Config file location
 CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
 
+# Cache directory for embeddings
+CACHE_DIR = Path.home() / ".mochi-mochi" / "cache"
+EMBEDDING_CACHE_FILE = CACHE_DIR / "embeddings.json"
+
+# Embedding model for deduplication
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
+
 # Global API key (set in main())
 API_KEY = None
 OPENAI_API_KEY = None
@@ -202,6 +209,39 @@ def get_openrouter_api_key():
     return api_key
 
 
+def load_embedding_cache():
+    """Load embedding cache from disk.
+
+    Returns:
+        dict: Cache mapping content_hash -> embedding vector (list of floats)
+    """
+    if not EMBEDDING_CACHE_FILE.exists():
+        return {}
+
+    try:
+        with open(EMBEDDING_CACHE_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load embedding cache: {e}")
+        return {}
+
+
+def save_embedding_cache(cache):
+    """Save embedding cache to disk.
+
+    Args:
+        cache: Dict mapping content_hash -> embedding vector
+    """
+    try:
+        # Create cache directory if it doesn't exist
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        with open(EMBEDDING_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Failed to save embedding cache: {e}")
+
+
 def parse_card(content):
     """Parse card content into question and answer."""
     q, _, a = content.partition('---')
@@ -212,6 +252,24 @@ def content_hash(question, answer):
     """Generate hash of card content for duplicate detection."""
     content = f"{question.strip()}\n---\n{answer.strip()}"
     return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+
+
+def embedding_cache_key(content_hash, model=None):
+    """Generate cache key for embedding that includes model ID.
+
+    Args:
+        content_hash: Hash of card content
+        model: Embedding model name (defaults to EMBEDDING_MODEL)
+
+    Returns:
+        Cache key string: hash of (model + content_hash)
+    """
+    if model is None:
+        model = EMBEDDING_MODEL
+
+    # Hash the combination of model and content
+    key_input = f"{model}:{content_hash}"
+    return hashlib.sha256(key_input.encode('utf-8')).hexdigest()[:16]
 
 
 def sanitize_filename(name):
@@ -1016,7 +1074,7 @@ def get_embedding(text, client):
         List of floats representing the embedding vector
     """
     response = client.embeddings.create(
-        model="openai/text-embedding-3-small",
+        model=EMBEDDING_MODEL,
         input=text
     )
     return response.data[0].embedding
@@ -1039,7 +1097,7 @@ def get_embeddings_batch(texts, client, batch_size=100):
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         response = client.embeddings.create(
-            model="openai/text-embedding-3-small",
+            model=EMBEDDING_MODEL,
             input=batch
         )
         # Extract embeddings in the same order as input
@@ -1261,30 +1319,62 @@ def dedupe(file_path=None, threshold=0.85):
     print(f"\nTotal cards loaded: {len(all_cards)}")
     cards = all_cards
 
-    # Initialize OpenRouter client for embeddings
-    embedding_client = OpenAI(
-        api_key=OPENROUTER_API_KEY,
-        base_url="https://openrouter.ai/api/v1"
-    )
+    # Load embedding cache
+    print("Loading embedding cache...")
+    embedding_cache = load_embedding_cache()
+    cache_hits = 0
+    cache_misses = 0
+
+    # Check which cards need new embeddings
+    cards_needing_embeddings = []
+    cards_needing_embeddings_indices = []
+
+    for idx, card in enumerate(cards):
+        # Check if embedding is cached (using model-aware cache key)
+        cache_key = embedding_cache_key(card['content_hash'])
+        if cache_key in embedding_cache:
+            card['embedding'] = embedding_cache[cache_key]
+            cache_hits += 1
+        else:
+            cards_needing_embeddings.append(card)
+            cards_needing_embeddings_indices.append(idx)
+            cache_misses += 1
+
+    print(f"  Cache hits: {cache_hits}, Cache misses: {cache_misses}")
+
+    # Generate embeddings for cards not in cache
+    if cards_needing_embeddings:
+        # Initialize OpenRouter client for embeddings
+        embedding_client = OpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1"
+        )
+
+        print(f"\nGenerating embeddings for {len(cards_needing_embeddings)} new card(s)...")
+        # Prepare texts for batch processing
+        texts = [f"{card['question']}\n{card['answer']}" for card in cards_needing_embeddings]
+
+        # Get embeddings in batches (much faster than sequential)
+        new_embeddings = get_embeddings_batch(texts, embedding_client)
+
+        # Assign embeddings to cards and update cache
+        for card, embedding in zip(cards_needing_embeddings, new_embeddings):
+            card['embedding'] = embedding
+            # Store in cache with model-aware key
+            cache_key = embedding_cache_key(card['content_hash'])
+            embedding_cache[cache_key] = embedding
+
+        # Save updated cache
+        print(f"Saving {len(new_embeddings)} new embedding(s) to cache...")
+        save_embedding_cache(embedding_cache)
+
+    print(f"\n✓ Embeddings ready: {cache_hits} from cache, {cache_misses} newly generated")
 
     # Initialize OpenRouter client for classification
     classification_client = OpenAI(
         api_key=OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1"
     )
-
-    print(f"Generating embeddings for {len(cards)} cards...")
-    # Prepare all texts for batch processing
-    texts = [f"{card['question']}\n{card['answer']}" for card in cards]
-
-    # Get embeddings in batches (much faster than sequential)
-    embeddings = get_embeddings_batch(texts, embedding_client)
-
-    # Assign embeddings back to cards
-    for card, embedding in zip(cards, embeddings):
-        card['embedding'] = embedding
-
-    print(f"\n✓ Generated {len(cards)} embeddings")
 
     print(f"\nFinding duplicate pairs (threshold: {threshold})...")
     pairs = find_duplicate_pairs(cards, threshold)
