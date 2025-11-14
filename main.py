@@ -23,6 +23,7 @@ API usage:
 """
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -30,7 +31,7 @@ import sys
 import requests
 from pathlib import Path
 from datetime import datetime
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 # Optional dependencies for deduplication
 try:
@@ -55,6 +56,9 @@ GRADING_CACHE_FILE = CACHE_DIR / "gradings.json"
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
 LLM_CLASSIFICATION_MODEL = "google/gemini-2.5-flash"
 CURATION_MODEL = "google/gemini-2.5-flash"
+
+# Parallel LLM call limit
+PARALLEL_LLM_CALLS = 10
 
 # Classification prompt template
 CLASSIFICATION_PROMPT_TEMPLATE = """Compare these two flashcards and classify their relationship:
@@ -86,22 +90,22 @@ Card:
 Q: {question}
 A: {answer}
 
-Quality Standards:
-1. **Clarity**: Question and answer should be clear, unambiguous, and easy to understand
-2. **Conciseness**: Avoid unnecessary words; be direct and focused
-3. **Accuracy**: Information must be factually correct
-4. **Completeness**: Answer should fully address the question without being excessive
-5. **Atomic**: Each card should test ONE concept (no compound questions)
-6. **Context-Independence**: Card should be understandable without external context
-7. **Active Recall**: Question should trigger active retrieval, not passive recognition
-8. **No Hints**: Question should not contain hints about the answer
-9. **Proper Formatting**: Use clear structure, bullet points where appropriate
+Quality Standards (CRITICAL - these are non-negotiable):
+1. **Succinct Question**: Question must be concise with zero bloat. Every word must be necessary.
+2. **Succinct Answer**: Answer must be brief and direct. No bloat, no fluff, no elaboration beyond what was asked.
+3. **Self-Contained Question**: Question MUST include ALL context needed to answer it. Reader should not need ANY external information.
+4. **Answer Scope**: Answer ONLY what was asked. Do NOT add related context, background, or extra information.
+5. **Clarity**: Question and answer should be clear, unambiguous, and easy to understand
+6. **Accuracy**: Information must be factually correct
+7. **Atomic**: Each card should test ONE concept (no compound questions)
+8. **Active Recall**: Question should trigger active retrieval, not passive recognition
+9. **No Hints**: Question should not contain hints about the answer
 10. **No Redundancy**: Avoid repeating information between question and answer
 
 Respond with EXACTLY this format:
 score | reasoning
 
-Example: 7 | Question is clear but answer is too verbose and contains redundant information from the question"""
+Example: 6 | Question lacks context (not self-contained). Answer adds unnecessary background information beyond what was asked."""
 
 # Card improvement prompt template
 CARD_IMPROVEMENT_PROMPT_TEMPLATE = """Improve this flashcard to meet quality standards. Current quality score: {score}/10
@@ -112,17 +116,22 @@ A: {answer}
 
 Issues identified: {reasoning}
 
-Quality Standards:
-1. **Clarity**: Question and answer should be clear, unambiguous, and easy to understand
-2. **Conciseness**: Avoid unnecessary words; be direct and focused
-3. **Accuracy**: Information must be factually correct
-4. **Completeness**: Answer should fully address the question without being excessive
-5. **Atomic**: Each card should test ONE concept (no compound questions)
-6. **Context-Independence**: Card should be understandable without external context
-7. **Active Recall**: Question should trigger active retrieval, not passive recognition
-8. **No Hints**: Question should not contain hints about the answer
-9. **Proper Formatting**: Use clear structure, bullet points where appropriate
+Quality Standards (CRITICAL - these are non-negotiable):
+1. **Succinct Question**: Question must be concise with zero bloat. Every word must be necessary.
+2. **Succinct Answer**: Answer must be brief and direct. No bloat, no fluff, no elaboration beyond what was asked.
+3. **Self-Contained Question**: Question MUST include ALL context needed to answer it. Reader should not need ANY external information.
+4. **Answer Scope**: Answer ONLY what was asked. Do NOT add related context, background, or extra information.
+5. **Clarity**: Question and answer should be clear, unambiguous, and easy to understand
+6. **Accuracy**: Information must be factually correct
+7. **Atomic**: Each card should test ONE concept (no compound questions)
+8. **Active Recall**: Question should trigger active retrieval, not passive recognition
+9. **No Hints**: Question should not contain hints about the answer
 10. **No Redundancy**: Avoid repeating information between question and answer
+
+IMPORTANT REMINDERS:
+- Question: Add ALL necessary context so it's self-contained, but keep it succinct
+- Answer: ONLY answer what was asked. Do not add "helpful" context or related information
+- Both: Be brutally concise. Remove every unnecessary word.
 
 Generate an improved version that addresses the issues. Respond with EXACTLY this format:
 QUESTION: <improved question>
@@ -1470,6 +1479,77 @@ def classify_duplicate_pair(card1, card2, client, classification_cache=None):
         return error_result
 
 
+async def classify_duplicate_pair_async(card1, card2, client, classification_cache=None):
+    """Async version: Use LLM to classify if cards are duplicates or complementary.
+
+    Args:
+        card1: First card dict with question and answer
+        card2: Second card dict with question and answer
+        client: AsyncOpenAI client (configured for OpenRouter)
+        classification_cache: Optional cache dict to store/retrieve results
+
+    Returns:
+        tuple: (classification, reasoning, cache_hit)
+        classification: 'duplicate', 'complementary', 'unclear', or 'error'
+        reasoning: Explanation from LLM or error message
+        cache_hit: Boolean indicating if result was from cache
+    """
+    prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(
+        q1=card1['question'],
+        a1=card1['answer'],
+        q2=card2['question'],
+        a2=card2['answer']
+    )
+
+    # Check cache first
+    cache_key = None
+    if classification_cache is not None:
+        cache_key = classification_cache_key(
+            card1['question'], card1['answer'],
+            card2['question'], card2['answer'],
+            prompt
+        )
+        if cache_key in classification_cache:
+            # Return cached result (stored as [classification, reasoning])
+            cached = classification_cache[cache_key]
+            return cached[0], cached[1], True  # cache_hit = True
+
+    try:
+        response = await client.chat.completions.create(
+            model=LLM_CLASSIFICATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=1024
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse response
+        if '|' not in result:
+            classification = 'unclear'
+            reasoning = f"LLM response format invalid: {result[:50]}"
+        else:
+            classification, _, reasoning = result.partition('|')
+            classification = classification.strip().lower()
+            reasoning = reasoning.strip()
+
+            # Validate classification
+            if classification not in ('duplicate', 'complementary', 'unclear'):
+                classification = 'unclear'
+                reasoning = f"Invalid classification '{classification}': {reasoning}"
+
+        # Store in cache
+        if classification_cache is not None and cache_key is not None:
+            classification_cache[cache_key] = [classification, reasoning]
+
+        return classification, reasoning, False  # cache_hit = False
+
+    except Exception as e:
+        error_result = ('error', f"LLM request failed: {str(e)[:100]}", False)
+        # Don't cache errors
+        return error_result
+
+
 def grade_card(card, client, grading_cache=None):
     """Grade a flashcard for quality using LLM.
 
@@ -1592,6 +1672,126 @@ def improve_card(card, score, reasoning, client):
         return None, None
 
 
+async def grade_card_async(card, client, grading_cache=None):
+    """Async version: Grade a flashcard for quality using LLM.
+
+    Args:
+        card: Card dict with question and answer
+        client: AsyncOpenAI client (configured for OpenRouter)
+        grading_cache: Optional cache dict to store/retrieve results
+
+    Returns:
+        tuple: (score, reasoning, cache_hit)
+        score: Quality score from 0-10 (int)
+        reasoning: Explanation from LLM
+        cache_hit: Boolean indicating if result was from cache
+    """
+    prompt = QUALITY_GRADING_PROMPT_TEMPLATE.format(
+        question=card['question'],
+        answer=card['answer']
+    )
+
+    # Check cache first
+    cache_key = None
+    if grading_cache is not None:
+        cache_key = grading_cache_key(
+            card['question'], card['answer'], prompt
+        )
+        if cache_key in grading_cache:
+            # Return cached result (stored as [score, reasoning])
+            cached = grading_cache[cache_key]
+            return cached[0], cached[1], True  # cache_hit = True
+
+    try:
+        response = await client.chat.completions.create(
+            model=CURATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=1024
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse response: "score | reasoning"
+        if '|' not in result:
+            score = 5  # Default middle score if format is invalid
+            reasoning = f"LLM response format invalid: {result[:50]}"
+        else:
+            score_str, _, reasoning = result.partition('|')
+            reasoning = reasoning.strip()
+
+            try:
+                score = int(score_str.strip())
+                # Clamp score to 0-10 range
+                score = max(0, min(10, score))
+            except ValueError:
+                score = 5
+                reasoning = f"Invalid score format: {score_str.strip()}"
+
+        # Store in cache
+        if grading_cache is not None and cache_key is not None:
+            grading_cache[cache_key] = [score, reasoning]
+
+        return score, reasoning, False  # cache_hit = False
+
+    except Exception as e:
+        error_result = (5, f"LLM request failed: {str(e)[:100]}", False)
+        # Don't cache errors
+        return error_result
+
+
+async def improve_card_async(card, score, reasoning, client):
+    """Async version: Generate improved version of a flashcard using LLM.
+
+    Args:
+        card: Card dict with question and answer
+        score: Current quality score (0-10)
+        reasoning: Issues identified by grading
+        client: AsyncOpenAI client (configured for OpenRouter)
+
+    Returns:
+        tuple: (improved_question, improved_answer)
+        Returns None, None on error
+    """
+    prompt = CARD_IMPROVEMENT_PROMPT_TEMPLATE.format(
+        score=score,
+        question=card['question'],
+        answer=card['answer'],
+        reasoning=reasoning
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=CURATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,  # Slightly creative for improvements
+            max_tokens=2048
+        )
+
+        result = response.choices[0].message.content.strip()
+
+        # Parse response: "QUESTION: ...\n---\nANSWER: ..."
+        if 'QUESTION:' not in result or '---' not in result or 'ANSWER:' not in result:
+            return None, None
+
+        # Extract question and answer
+        parts = result.split('---', 1)
+        if len(parts) != 2:
+            return None, None
+
+        question_part = parts[0].strip()
+        answer_part = parts[1].strip()
+
+        # Remove "QUESTION:" and "ANSWER:" prefixes
+        improved_question = question_part.replace('QUESTION:', '', 1).strip()
+        improved_answer = answer_part.replace('ANSWER:', '', 1).strip()
+
+        return improved_question, improved_answer
+
+    except Exception as e:
+        return None, None
+
+
 def dedupe(file_path=None, threshold=0.85):
     """Find and remove duplicate cards from deck file(s) using semantic similarity.
 
@@ -1686,12 +1886,6 @@ def dedupe(file_path=None, threshold=0.85):
 
     print(f"\n✓ Embeddings ready: {cache_hits} from cache, {cache_misses} newly generated")
 
-    # Initialize OpenRouter client for classification
-    classification_client = OpenAI(
-        api_key=OPENROUTER_API_KEY,
-        base_url="https://openrouter.ai/api/v1"
-    )
-
     print(f"\nFinding duplicate pairs (threshold: {threshold})...")
     pairs = find_duplicate_pairs(cards, threshold)
 
@@ -1700,33 +1894,73 @@ def dedupe(file_path=None, threshold=0.85):
         return
 
     print(f"\nFound {len(pairs)} potential duplicate pair(s)")
-    print(f"Classifying with LLM...")
+    print(f"Classifying with LLM (parallelized: {PARALLEL_LLM_CALLS} concurrent)...")
 
     # Load classification cache
     classification_cache = load_classification_cache()
     classification_cache_hits = 0
     classification_cache_misses = 0
 
-    # Classify pairs with LLM
-    classified_pairs = []
-    for idx, (i, j, score) in enumerate(pairs, 1):
-        classification, reasoning, cache_hit = classify_duplicate_pair(
-            cards[i], cards[j], classification_client, classification_cache
+    # Classify pairs with LLM in parallel batches
+    async def classify_pairs_async():
+        # Initialize async OpenRouter client for classification
+        async_client = AsyncOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1"
         )
 
-        if cache_hit:
+        classified_pairs = []
+        total = len(pairs)
+
+        # Process in batches of PARALLEL_LLM_CALLS
+        for batch_start in range(0, total, PARALLEL_LLM_CALLS):
+            batch_end = min(batch_start + PARALLEL_LLM_CALLS, total)
+            batch = pairs[batch_start:batch_end]
+
+            # Create async tasks for this batch
+            tasks = []
+            for i, j, score in batch:
+                task = classify_duplicate_pair_async(
+                    cards[i], cards[j], async_client, classification_cache
+                )
+                tasks.append((i, j, score, task))
+
+            # Wait for all tasks in this batch to complete
+            for i, j, score, task in tasks:
+                classification, reasoning, cache_hit = await task
+                classified_pairs.append({
+                    'i': i,
+                    'j': j,
+                    'score': score,
+                    'classification': classification,
+                    'reasoning': reasoning
+                })
+
+            # Update progress
+            print(f"  {min(batch_end, total)}/{total} classified", end='\r')
+
+        return classified_pairs
+
+    # Run async classification
+    classified_pairs = asyncio.run(classify_pairs_async())
+
+    # Count cache hits/misses
+    for pair in classified_pairs:
+        prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(
+            q1=cards[pair['i']]['question'],
+            a1=cards[pair['i']]['answer'],
+            q2=cards[pair['j']]['question'],
+            a2=cards[pair['j']]['answer']
+        )
+        cache_key = classification_cache_key(
+            cards[pair['i']]['question'], cards[pair['i']]['answer'],
+            cards[pair['j']]['question'], cards[pair['j']]['answer'],
+            prompt
+        )
+        if cache_key in classification_cache:
             classification_cache_hits += 1
         else:
             classification_cache_misses += 1
-
-        classified_pairs.append({
-            'i': i,
-            'j': j,
-            'score': score,
-            'classification': classification,
-            'reasoning': reasoning
-        })
-        print(f"  {idx}/{len(pairs)} classified", end='\r')
 
     # Save classification cache
     if classification_cache_misses > 0:
@@ -1932,37 +2166,63 @@ def curate(file_path=None, threshold=8):
     print(f"\nTotal cards loaded: {len(all_cards)}")
     cards = all_cards
 
-    # Initialize OpenRouter client
-    curation_client = OpenAI(
-        api_key=OPENROUTER_API_KEY,
-        base_url="https://openrouter.ai/api/v1"
-    )
-
     # Load grading cache
     print("Loading grading cache...")
     grading_cache = load_grading_cache()
     grading_cache_hits = 0
     grading_cache_misses = 0
 
-    # Grade all cards
-    print(f"\nGrading {len(cards)} card(s) for quality...")
+    # Grade all cards in parallel batches
+    print(f"\nGrading {len(cards)} card(s) for quality (parallelized: {PARALLEL_LLM_CALLS} concurrent)...")
     cards_needing_improvement = []
 
-    for idx, card in enumerate(cards, 1):
-        score, reasoning, cache_hit = grade_card(card, curation_client, grading_cache)
+    async def grade_cards_async():
+        # Initialize async OpenRouter client
+        async_client = AsyncOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1"
+        )
 
-        if cache_hit:
+        total = len(cards)
+
+        # Process in batches of PARALLEL_LLM_CALLS
+        for batch_start in range(0, total, PARALLEL_LLM_CALLS):
+            batch_end = min(batch_start + PARALLEL_LLM_CALLS, total)
+            batch = cards[batch_start:batch_end]
+
+            # Create async tasks for this batch
+            tasks = []
+            for card in batch:
+                task = grade_card_async(card, async_client, grading_cache)
+                tasks.append((card, task))
+
+            # Wait for all tasks in this batch to complete
+            for card, task in tasks:
+                score, reasoning, cache_hit = await task
+                card['quality_score'] = score
+                card['quality_reasoning'] = reasoning
+
+                if score < threshold:
+                    cards_needing_improvement.append(card)
+
+            # Update progress
+            avg_score = sum(c['quality_score'] for c in batch) / len(batch) if batch else 0
+            print(f"  {min(batch_end, total)}/{total} graded (avg: {avg_score:.1f}/10)", end='\r')
+
+    # Run async grading
+    asyncio.run(grade_cards_async())
+
+    # Count cache hits/misses
+    for card in cards:
+        prompt = QUALITY_GRADING_PROMPT_TEMPLATE.format(
+            question=card['question'],
+            answer=card['answer']
+        )
+        cache_key = grading_cache_key(card['question'], card['answer'], prompt)
+        if cache_key in grading_cache:
             grading_cache_hits += 1
         else:
             grading_cache_misses += 1
-
-        card['quality_score'] = score
-        card['quality_reasoning'] = reasoning
-
-        if score < threshold:
-            cards_needing_improvement.append(card)
-
-        print(f"  {idx}/{len(cards)} graded (score: {score}/10)", end='\r')
 
     # Save grading cache
     if grading_cache_misses > 0:
@@ -2003,27 +2263,53 @@ def curate(file_path=None, threshold=8):
         print("Aborted")
         return
 
-    # Improve cards below threshold
-    print(f"\nImproving {len(cards_needing_improvement)} card(s)...")
+    # Improve cards below threshold in parallel batches
+    print(f"\nImproving {len(cards_needing_improvement)} card(s) (parallelized: {PARALLEL_LLM_CALLS} concurrent)...")
     improved_count = 0
     failed_count = 0
 
-    for idx, card in enumerate(cards_needing_improvement, 1):
-        print(f"  {idx}/{len(cards_needing_improvement)} improving...", end='\r')
-
-        improved_q, improved_a = improve_card(
-            card, card['quality_score'], card['quality_reasoning'], curation_client
+    async def improve_cards_async():
+        # Initialize async OpenRouter client
+        async_client = AsyncOpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1"
         )
 
-        if improved_q and improved_a:
-            # Update card with improved content
-            card['question'] = improved_q
-            card['answer'] = improved_a
-            # Update content hash for the improved card
-            card['content_hash'] = content_hash(improved_q, improved_a)
-            improved_count += 1
-        else:
-            failed_count += 1
+        nonlocal improved_count, failed_count
+        total = len(cards_needing_improvement)
+
+        # Process in batches of PARALLEL_LLM_CALLS
+        for batch_start in range(0, total, PARALLEL_LLM_CALLS):
+            batch_end = min(batch_start + PARALLEL_LLM_CALLS, total)
+            batch = cards_needing_improvement[batch_start:batch_end]
+
+            # Create async tasks for this batch
+            tasks = []
+            for card in batch:
+                task = improve_card_async(
+                    card, card['quality_score'], card['quality_reasoning'], async_client
+                )
+                tasks.append((card, task))
+
+            # Wait for all tasks in this batch to complete
+            for card, task in tasks:
+                improved_q, improved_a = await task
+
+                if improved_q and improved_a:
+                    # Update card with improved content
+                    card['question'] = improved_q
+                    card['answer'] = improved_a
+                    # Update content hash for the improved card
+                    card['content_hash'] = content_hash(improved_q, improved_a)
+                    improved_count += 1
+                else:
+                    failed_count += 1
+
+            # Update progress
+            print(f"  {min(batch_end, total)}/{total} improved", end='\r')
+
+    # Run async improvement
+    asyncio.run(improve_cards_async())
 
     print(f"\n✓ Improved {improved_count} card(s), {failed_count} failed")
 
