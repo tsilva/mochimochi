@@ -48,9 +48,34 @@ CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
 # Cache directory for embeddings
 CACHE_DIR = Path.home() / ".mochi-mochi" / "cache"
 EMBEDDING_CACHE_FILE = CACHE_DIR / "embeddings.json"
+CLASSIFICATION_CACHE_FILE = CACHE_DIR / "classifications.json"
 
-# Embedding model for deduplication
+# Models for deduplication
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
+LLM_CLASSIFICATION_MODEL = "google/gemini-2.5-flash"
+
+# Classification prompt template
+CLASSIFICATION_PROMPT_TEMPLATE = """Compare these two flashcards and classify their relationship:
+
+Card 1:
+Q: {q1}
+A: {a1}
+
+Card 2:
+Q: {q2}
+A: {a2}
+
+Classify as ONE of:
+- "duplicate": Same concept, essentially redundant (one should be removed)
+- "complementary": Related but covering different aspects/opposite scenarios (both should be kept)
+- "unclear": Cannot determine confidently
+
+IMPORTANT: If the cards are flipped versions of each other (where Q1 ≈ A2 and A1 ≈ Q2), classify as "complementary" because they engage the brain in different ways and are pedagogically valuable.
+
+Respond with EXACTLY this format:
+classification | reasoning (one line explanation)
+
+Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing X - opposite scenarios of same concept"""
 
 # Global API key (set in main())
 API_KEY = None
@@ -242,6 +267,39 @@ def save_embedding_cache(cache):
         print(f"Warning: Failed to save embedding cache: {e}")
 
 
+def load_classification_cache():
+    """Load LLM classification cache from disk.
+
+    Returns:
+        dict: Cache mapping request_hash -> (classification, reasoning) tuple
+    """
+    if not CLASSIFICATION_CACHE_FILE.exists():
+        return {}
+
+    try:
+        with open(CLASSIFICATION_CACHE_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load classification cache: {e}")
+        return {}
+
+
+def save_classification_cache(cache):
+    """Save LLM classification cache to disk.
+
+    Args:
+        cache: Dict mapping request_hash -> (classification, reasoning) tuple
+    """
+    try:
+        # Create cache directory if it doesn't exist
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        with open(CLASSIFICATION_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Failed to save classification cache: {e}")
+
+
 def parse_card(content):
     """Parse card content into question and answer."""
     q, _, a = content.partition('---')
@@ -269,6 +327,29 @@ def embedding_cache_key(content_hash, model=None):
 
     # Hash the combination of model and content
     key_input = f"{model}:{content_hash}"
+    return hashlib.sha256(key_input.encode('utf-8')).hexdigest()[:16]
+
+
+def classification_cache_key(card1_question, card1_answer, card2_question, card2_answer, prompt, model=None):
+    """Generate cache key for LLM classification that includes model, prompt, and card content.
+
+    Args:
+        card1_question: Question text of first card
+        card1_answer: Answer text of first card
+        card2_question: Question text of second card
+        card2_answer: Answer text of second card
+        prompt: The prompt template used for classification
+        model: LLM model name (defaults to LLM_CLASSIFICATION_MODEL)
+
+    Returns:
+        Cache key string: hash of (model + prompt + card1 + card2)
+    """
+    if model is None:
+        model = LLM_CLASSIFICATION_MODEL
+
+    # Hash the entire request: model + prompt + both cards
+    # Use consistent ordering to ensure same pair gets same key regardless of order
+    key_input = f"{model}||{prompt}||{card1_question}||{card1_answer}||{card2_question}||{card2_answer}"
     return hashlib.sha256(key_input.encode('utf-8')).hexdigest()[:16]
 
 
@@ -1213,44 +1294,44 @@ def find_duplicate_pairs(cards, threshold=0.85):
     return pairs
 
 
-def classify_duplicate_pair(card1, card2, client):
+def classify_duplicate_pair(card1, card2, client, classification_cache=None):
     """Use LLM to classify if cards are duplicates or complementary.
 
     Args:
         card1: First card dict with question and answer
         card2: Second card dict with question and answer
         client: OpenAI-compatible client (configured for OpenRouter)
+        classification_cache: Optional cache dict to store/retrieve results
 
     Returns:
-        tuple: (classification, reasoning)
+        tuple: (classification, reasoning, cache_hit)
         classification: 'duplicate', 'complementary', 'unclear', or 'error'
         reasoning: Explanation from LLM or error message
+        cache_hit: Boolean indicating if result was from cache
     """
-    prompt = f"""Compare these two flashcards and classify their relationship:
+    prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(
+        q1=card1['question'],
+        a1=card1['answer'],
+        q2=card2['question'],
+        a2=card2['answer']
+    )
 
-Card 1:
-Q: {card1['question']}
-A: {card1['answer']}
-
-Card 2:
-Q: {card2['question']}
-A: {card2['answer']}
-
-Classify as ONE of:
-- "duplicate": Same concept, essentially redundant (one should be removed)
-- "complementary": Related but covering different aspects/opposite scenarios (both should be kept)
-- "unclear": Cannot determine confidently
-
-IMPORTANT: If the cards are flipped versions of each other (where Q1 ≈ A2 and A1 ≈ Q2), classify as "complementary" because they engage the brain in different ways and are pedagogically valuable.
-
-Respond with EXACTLY this format:
-classification | reasoning (one line explanation)
-
-Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing X - opposite scenarios of same concept"""
+    # Check cache first
+    cache_key = None
+    if classification_cache is not None:
+        cache_key = classification_cache_key(
+            card1['question'], card1['answer'],
+            card2['question'], card2['answer'],
+            prompt
+        )
+        if cache_key in classification_cache:
+            # Return cached result (stored as [classification, reasoning])
+            cached = classification_cache[cache_key]
+            return cached[0], cached[1], True  # cache_hit = True
 
     try:
         response = client.chat.completions.create(
-            model="google/gemini-2.5-flash", 
+            model=LLM_CLASSIFICATION_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=1024
@@ -1260,20 +1341,28 @@ Example: complementary | Card 1 asks about increasing X, Card 2 about decreasing
 
         # Parse response
         if '|' not in result:
-            return 'unclear', f"LLM response format invalid: {result[:50]}"
+            classification = 'unclear'
+            reasoning = f"LLM response format invalid: {result[:50]}"
+        else:
+            classification, _, reasoning = result.partition('|')
+            classification = classification.strip().lower()
+            reasoning = reasoning.strip()
 
-        classification, _, reasoning = result.partition('|')
-        classification = classification.strip().lower()
-        reasoning = reasoning.strip()
+            # Validate classification
+            if classification not in ('duplicate', 'complementary', 'unclear'):
+                classification = 'unclear'
+                reasoning = f"Invalid classification '{classification}': {reasoning}"
 
-        # Validate classification
-        if classification not in ('duplicate', 'complementary', 'unclear'):
-            return 'unclear', f"Invalid classification '{classification}': {reasoning}"
+        # Store in cache
+        if classification_cache is not None and cache_key is not None:
+            classification_cache[cache_key] = [classification, reasoning]
 
-        return classification, reasoning
+        return classification, reasoning, False  # cache_hit = False
 
     except Exception as e:
-        return 'error', f"LLM request failed: {str(e)[:100]}"
+        error_result = ('error', f"LLM request failed: {str(e)[:100]}", False)
+        # Don't cache errors
+        return error_result
 
 
 def dedupe(file_path=None, threshold=0.85):
@@ -1386,12 +1475,23 @@ def dedupe(file_path=None, threshold=0.85):
     print(f"\nFound {len(pairs)} potential duplicate pair(s)")
     print(f"Classifying with LLM...")
 
+    # Load classification cache
+    classification_cache = load_classification_cache()
+    classification_cache_hits = 0
+    classification_cache_misses = 0
+
     # Classify pairs with LLM
     classified_pairs = []
     for idx, (i, j, score) in enumerate(pairs, 1):
-        classification, reasoning = classify_duplicate_pair(
-            cards[i], cards[j], classification_client
+        classification, reasoning, cache_hit = classify_duplicate_pair(
+            cards[i], cards[j], classification_client, classification_cache
         )
+
+        if cache_hit:
+            classification_cache_hits += 1
+        else:
+            classification_cache_misses += 1
+
         classified_pairs.append({
             'i': i,
             'j': j,
@@ -1401,6 +1501,12 @@ def dedupe(file_path=None, threshold=0.85):
         })
         print(f"  {idx}/{len(pairs)} classified", end='\r')
 
+    # Save classification cache
+    if classification_cache_misses > 0:
+        print(f"\n  Saving {classification_cache_misses} new classification(s) to cache...")
+        save_classification_cache(classification_cache)
+
+    print(f"  Classification cache: {classification_cache_hits} hits, {classification_cache_misses} misses")
     print()  # Newline after progress
 
     # Separate pairs by classification
