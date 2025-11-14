@@ -1183,6 +1183,8 @@ Classify as ONE of:
 - "complementary": Related but covering different aspects/opposite scenarios (both should be kept)
 - "unclear": Cannot determine confidently
 
+IMPORTANT: If the cards are flipped versions of each other (where Q1 ≈ A2 and A1 ≈ Q2), classify as "complementary" because they engage the brain in different ways and are pedagogically valuable.
+
 Respond with EXACTLY this format:
 classification | reasoning (one line explanation)
 
