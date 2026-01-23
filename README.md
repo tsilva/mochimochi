@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="logo.png" alt="mochi-mochi" width="256"/>
+<img src="logo.png" alt="mochi-mochi" width="512"/>
 
 # mochi-mochi
 
