@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/tsilva/mochi-mochi)](https://github.com/tsilva/mochi-mochi/issues)
 
-**🍡 Local-first CLI for curating [Mochi](https://mochi.cards/) flashcard decks with AI-powered deduplication and quality grading**
+**🍡 Local-first CLI for curating [Mochi](https://mochi.cards/) flashcard decks with AI-powered deduplication and quality grading ✨**
 
 [Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Report Bug](https://github.com/tsilva/mochi-mochi/issues)
 
