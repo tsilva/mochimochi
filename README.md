@@ -1,16 +1,16 @@
 <div align="center">
 
-<img src="logo.png" alt="mochi-mochi" width="512"/>
+<img src="logo.png" alt="mochimochi" width="512"/>
 
-# mochi-mochi
+# mochimochi
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![GitHub issues](https://img.shields.io/github/issues/tsilva/mochi-mochi)](https://github.com/tsilva/mochi-mochi/issues)
+[![GitHub issues](https://img.shields.io/github/issues/tsilva/mochimochi)](https://github.com/tsilva/mochimochi/issues)
 
 **🍡 Local-first CLI for curating [Mochi](https://mochi.cards/) flashcard decks with AI-powered deduplication and quality grading ✨**
 
-[Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Report Bug](https://github.com/tsilva/mochi-mochi/issues)
+[Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Report Bug](https://github.com/tsilva/mochimochi/issues)
 
 </div>
 
@@ -31,13 +31,13 @@
 
 ```bash
 # Install with uv (recommended)
-uv tool install git+https://github.com/tsilva/mochi-mochi.git
+uv tool install git+https://github.com/tsilva/mochimochi.git
 
 # Update
-uv tool upgrade mochi-mochi
+uv tool upgrade mochimochi
 
 # Uninstall
-uv tool uninstall mochi-mochi
+uv tool uninstall mochimochi
 ```
 
 **Requirements:** Python 3.10+
@@ -48,20 +48,20 @@ uv tool uninstall mochi-mochi
 
 ```bash
 # First run prompts for your Mochi API key
-mochi-mochi decks
+mochimochi decks
 
 # Pull a deck to edit locally
-mochi-mochi pull abc123xyz
+mochimochi pull abc123xyz
 # Creates: deck-your-deck-name-abc123xyz.md
 
 # Find and remove duplicates with AI
-mochi-mochi dedupe deck-your-deck-name-abc123xyz.md
+mochimochi dedupe deck-your-deck-name-abc123xyz.md
 
 # Grade and improve card quality
-mochi-mochi curate deck-your-deck-name-abc123xyz.md
+mochimochi curate deck-your-deck-name-abc123xyz.md
 
 # Push changes back to Mochi
-mochi-mochi push deck-your-deck-name-abc123xyz.md
+mochimochi push deck-your-deck-name-abc123xyz.md
 ```
 
 ---
@@ -83,13 +83,13 @@ Omit `[file]` to operate on all `deck-*.md` files in the current directory.
 
 ```bash
 # Dedupe with stricter matching
-mochi-mochi dedupe deck.md --threshold 0.9
+mochimochi dedupe deck.md --threshold 0.9
 
 # Curate with higher quality bar
-mochi-mochi curate deck.md --threshold 9
+mochimochi curate deck.md --threshold 9
 
 # Push without duplicate detection
-mochi-mochi push deck.md --force
+mochimochi push deck.md --force
 ```
 
 ---
@@ -123,7 +123,7 @@ New card answer
 
 ## Configuration
 
-API keys are stored in `~/.mochi-mochi/config` and prompted on first use:
+API keys are stored in `~/.mochimochi/config` and prompted on first use:
 
 | Key | Required For | Get From |
 |-----|--------------|----------|
@@ -140,19 +140,19 @@ API keys are stored in `~/.mochi-mochi/config` and prompted on first use:
 mkdir ~/mochi-decks && cd ~/mochi-decks && git init
 
 # Pull your decks
-mochi-mochi pull abc123
-mochi-mochi pull def456
+mochimochi pull abc123
+mochimochi pull def456
 
 # Commit initial state
 git add . && git commit -m "Initial decks"
 
 # Daily workflow
 vim deck-python-abc123.md          # Edit cards
-mochi-mochi dedupe deck-python-abc123.md  # Remove duplicates
-mochi-mochi curate deck-python-abc123.md  # Improve quality
+mochimochi dedupe deck-python-abc123.md  # Remove duplicates
+mochimochi curate deck-python-abc123.md  # Improve quality
 git diff                           # Review changes
 git commit -am "Curate python deck"
-mochi-mochi push deck-python-abc123.md    # Sync to Mochi
+mochimochi push deck-python-abc123.md    # Sync to Mochi
 ```
 
 ---

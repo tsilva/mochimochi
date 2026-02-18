@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**mochi-mochi** is a Python CLI tool for managing Mochi flashcards via the Mochi API. It provides CRUD operations with a local-first sync workflow.
+**mochimochi** is a Python CLI tool for managing Mochi flashcards via the Mochi API. It provides CRUD operations with a local-first sync workflow.
 
 **Architecture**: Simple local-first sync (~620 lines). Local markdown file is source of truth, Mochi is sync target.
 
@@ -20,12 +20,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 python main.py <command>
 
 # Or install globally with uv tool
-uv tool install git+https://github.com/tsilva/mochi-mochi.git
-mochi-mochi <command>
+uv tool install git+https://github.com/tsilva/mochimochi.git
+mochimochi <command>
 
 # Or install locally for development
 uv sync
-mochi-mochi <command>
+mochimochi <command>
 ```
 
 ### Available Commands
@@ -75,11 +75,11 @@ uv sync --extra dev
 
 ## Configuration
 
-**API Key Configuration**: The tool stores API keys in `~/.mochi-mochi/config`
+**API Key Configuration**: The tool stores API keys in `~/.mochimochi/config`
 
 On first run, the tool will prompt you to enter your Mochi API key and automatically save it to the config file.
 
-**Config file format** (`~/.mochi-mochi/config`):
+**Config file format** (`~/.mochimochi/config`):
 ```
 MOCHI_API_KEY=your_mochi_api_key
 ```
@@ -150,7 +150,7 @@ The tool operates on a **local-first model** with multiple deck support:
 - **`get_decks()`**: Fetch all decks from Mochi API
 - **`get_deck(deck_id)`**: Fetch specific deck info
 - **`find_deck(decks, deck_name, deck_id)`**: Find deck by name (partial match) or ID
-- **`load_user_config()`**: Load configuration from `~/.mochi-mochi/config`
+- **`load_user_config()`**: Load configuration from `~/.mochimochi/config`
 - **`get_api_key()`**: Get API key from config, prompting user if not found
 - **`prompt_and_save_api_key()`**: Prompt user for API key and save to config file
 
@@ -204,18 +204,18 @@ New answer
 **Recommended Setup** (separate git repo for all decks):
 ```bash
 # Install tool globally
-uv tool install git+https://github.com/tsilva/mochi-mochi.git
+uv tool install git+https://github.com/tsilva/mochimochi.git
 
-# First run will prompt for API key (saved to ~/.mochi-mochi/config)
-mochi-mochi decks
+# First run will prompt for API key (saved to ~/.mochimochi/config)
+mochimochi decks
 
 # Create your decks repository (separate from tool)
 mkdir ~/mochi-decks && cd ~/mochi-decks
 git init
 
 # Option 1: Pull existing decks from Mochi
-mochi-mochi pull abc123xyz           # Creates: deck-python-basics-abc123xyz.md
-mochi-mochi pull def456uvw           # Creates: deck-javascript-def456uvw.md
+mochimochi pull abc123xyz           # Creates: deck-python-basics-abc123xyz.md
+mochimochi pull def456uvw           # Creates: deck-javascript-def456uvw.md
 
 # Option 2: Create a new deck locally
 cat > deck-machine-learning.md << 'EOF'
@@ -228,7 +228,7 @@ What is supervised learning?
 Learning from labeled data
 EOF
 
-mochi-mochi push deck-machine-learning.md    # Creates deck in Mochi, renames to deck-machine-learning-xyz123.md
+mochimochi push deck-machine-learning.md    # Creates deck in Mochi, renames to deck-machine-learning-xyz123.md
 
 git add . && git commit -m "Initial decks"
 
@@ -236,13 +236,13 @@ git add . && git commit -m "Initial decks"
 vim deck-python-basics-abc123xyz.md          # Edit cards
 git diff                                      # Review changes
 git commit -am "Add list comprehension question"
-mochi-mochi push deck-python-basics-abc123xyz.md  # Sync to Mochi
+mochimochi push deck-python-basics-abc123xyz.md  # Sync to Mochi
 ```
 
 **Why separate directory?**
-- Tool repo (mochi-mochi) is public, your decks repo is private
+- Tool repo (mochimochi) is public, your decks repo is private
 - Manage all decks in one version-controlled repo
-- No config files in decks repo - API key stored globally in `~/.mochi-mochi/config`
+- No config files in decks repo - API key stored globally in `~/.mochimochi/config`
 - Each deck file carries its deck ID in filename
 - Create new decks directly from local files without needing to access Mochi web UI
 
