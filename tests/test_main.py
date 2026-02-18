@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test suite for mochi-mochi."""
+"""Test suite for mochimochi."""
 
 import os
 import pytest

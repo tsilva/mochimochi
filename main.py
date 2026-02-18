@@ -2,17 +2,17 @@
 """Mochi flashcard management CLI with local-first multi-deck workflow.
 
 Workflow:
-    1. mochi-mochi decks                              # List available decks
-    2. mochi-mochi pull <deck_id>                     # Download to deck-<name>-<deck_id>.md
+    1. mochimochi decks                              # List available decks
+    2. mochimochi pull <deck_id>                     # Download to deck-<name>-<deck_id>.md
     3. Edit deck-<name>-<deck_id>.md locally
-    4. mochi-mochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi (local → remote)
-       or: mochi-mochi sync deck-<name>-<deck_id>.md  # Bidirectional sync (handles remote deletions)
-       or: mochi-mochi push                           # Upload all deck files in current directory
-       or: mochi-mochi sync                           # Sync all deck files in current directory
+    4. mochimochi push deck-<name>-<deck_id>.md      # Upload changes back to Mochi (local → remote)
+       or: mochimochi sync deck-<name>-<deck_id>.md  # Bidirectional sync (handles remote deletions)
+       or: mochimochi push                           # Upload all deck files in current directory
+       or: mochimochi sync                           # Sync all deck files in current directory
 
     Or create a new deck:
     1. Create deck-<name>.md file locally
-    2. mochi-mochi push deck-<name>.md                # Creates deck in Mochi, renames file
+    2. mochimochi push deck-<name>.md                # Creates deck in Mochi, renames file
 
 API usage:
     from main import create_card, update_card, delete_card, pull, push, sync, create_deck
@@ -44,10 +44,10 @@ except ImportError:
 BASE_URL = "https://app.mochi.cards/api"
 
 # Config file location
-CONFIG_PATH = Path.home() / ".mochi-mochi" / "config"
+CONFIG_PATH = Path.home() / ".mochimochi" / "config"
 
 # Cache directory for embeddings
-CACHE_DIR = Path.home() / ".mochi-mochi" / "cache"
+CACHE_DIR = Path.home() / ".mochimochi" / "cache"
 EMBEDDING_CACHE_FILE = CACHE_DIR / "embeddings.json"
 CLASSIFICATION_CACHE_FILE = CACHE_DIR / "classifications.json"
 GRADING_CACHE_FILE = CACHE_DIR / "gradings.json"
@@ -145,7 +145,7 @@ OPENROUTER_API_KEY = None
 
 
 def load_user_config():
-    """Load configuration from user config file at ~/.mochi-mochi/config.
+    """Load configuration from user config file at ~/.mochimochi/config.
 
     Returns:
         dict: Configuration dictionary with keys like 'MOCHI_API_KEY'
@@ -2405,7 +2405,7 @@ def main():
             print(f"  ID: {deck['id']}")
             print("-" * 60)
         print("\nTo pull a deck:")
-        print("  mochi-mochi pull <deck_id>")
+        print("  mochimochi pull <deck_id>")
         return
 
     elif args.command == "pull":
@@ -2486,16 +2486,16 @@ def main():
     elif args.command is None:
         print("No command specified. Use --help to see available commands.")
         print("\nQuick start:")
-        print("  1. mochi-mochi decks                          # List decks")
-        print("  2. mochi-mochi pull <deck_id>                 # Download deck")
+        print("  1. mochimochi decks                          # List decks")
+        print("  2. mochimochi pull <deck_id>                 # Download deck")
         print("  3. Edit deck-<deck-name>-<deck_id>.md")
-        print("  4. mochi-mochi push deck-<deck-name>-<deck_id>.md  # Upload changes (one-way)")
-        print("     or: mochi-mochi sync deck-<deck-name>-<deck_id>.md  # Bidirectional sync")
-        print("     or: mochi-mochi push                       # Upload all deck files")
-        print("     or: mochi-mochi sync                       # Sync all deck files")
+        print("  4. mochimochi push deck-<deck-name>-<deck_id>.md  # Upload changes (one-way)")
+        print("     or: mochimochi sync deck-<deck-name>-<deck_id>.md  # Bidirectional sync")
+        print("     or: mochimochi push                       # Upload all deck files")
+        print("     or: mochimochi sync                       # Sync all deck files")
         print("\nOr create a new deck:")
         print("  1. Create deck-<name>.md file")
-        print("  2. mochi-mochi push deck-<name>.md            # Creates deck in Mochi")
+        print("  2. mochimochi push deck-<name>.md            # Creates deck in Mochi")
 
 
 if __name__ == "__main__":

@@ -1,1 +1,1 @@
-"""Test suite for mochi-mochi."""
+"""Test suite for mochimochi."""
