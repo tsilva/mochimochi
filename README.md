@@ -4,6 +4,8 @@
 
 # mochimochi
 
+[![CI](https://github.com/tsilva/mochimochi/actions/workflows/release.yml/badge.svg)](https://github.com/tsilva/mochimochi/actions/workflows/release.yml)
+
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/tsilva/mochimochi)](https://github.com/tsilva/mochimochi/issues)
