@@ -58,3 +58,8 @@ markers = [
     "integration: marks tests as integration tests (require live API)",
 ]
 
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
