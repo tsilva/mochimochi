@@ -2,8 +2,10 @@
 """Test suite for mochimochi."""
 
 import os
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+
 import main
 
 
@@ -131,7 +133,7 @@ class TestCRUDOperations:
             # Cleanup on failure
             try:
                 main.delete_card(card_id)
-            except:
+            except Exception:
                 pass
             raise e
 

@@ -26,17 +26,16 @@ import argparse
 import asyncio
 import hashlib
 import json
-import os
 import sys
-import requests
 from pathlib import Path
-from datetime import datetime
-from openai import OpenAI, AsyncOpenAI
+
+import requests
+from openai import AsyncOpenAI, OpenAI
 
 # Optional dependencies for deduplication
 try:
-    import numpy as np
     import faiss
+    import numpy as np
     HAS_FAISS = True
 except ImportError:
     HAS_FAISS = False
@@ -604,7 +603,7 @@ def format_card_to_markdown(card):
 
     archived = card.get('archived', False)
     if archived:
-        lines.append(f"archived: true")
+        lines.append("archived: true")
 
     lines.append("---")
     lines.append(card['question'])
@@ -999,7 +998,7 @@ def push(file_path, force=False):
 
     # Check for data inconsistency: cards with IDs that don't exist remotely
     if missing_remote:
-        print(f"\n❌ Error: Data inconsistency detected!")
+        print("\n❌ Error: Data inconsistency detected!")
         print(f"Found {len(missing_remote)} card(s) with IDs that don't exist remotely.")
         print("This indicates cards were deleted remotely but still exist locally.\n")
         print("Missing cards:")
@@ -1024,7 +1023,7 @@ def push(file_path, force=False):
         return
 
     # Show summary
-    print(f"\nChanges to push:")
+    print("\nChanges to push:")
     print(f"  Create: {len(to_create)}")
     print(f"  Update: {len(to_update)}")
     print(f"  Delete: {len(to_delete)}")
@@ -1113,7 +1112,7 @@ def sync(file_path, force=False):
 
     # Sync only works with existing decks (must have deck ID)
     if deck_id is None:
-        print(f"\n❌ Error: Cannot sync new deck file (no deck ID in filename)")
+        print("\n❌ Error: Cannot sync new deck file (no deck ID in filename)")
         print("Use 'push' command to create the deck first, then use 'sync'")
         return
 
@@ -1171,7 +1170,7 @@ def sync(file_path, force=False):
         return
 
     # Show summary
-    print(f"\nSync summary:")
+    print("\nSync summary:")
     print(f"  Create (local → remote): {len(to_create)}")
     print(f"  Update (local → remote): {len(to_update)}")
     print(f"  Delete remotely (local → remote): {len(to_delete_remotely)}")
@@ -1347,13 +1346,11 @@ def find_duplicate_pairs(cards, threshold=0.85):
         faiss.normalize_L2(embeddings)
 
         # Try to use GPU if available
-        use_gpu = False
         try:
             if faiss.get_num_gpus() > 0:
                 # Move index to GPU
                 res = faiss.StandardGpuResources()
                 index = faiss.GpuIndexFlatIP(res, d)
-                use_gpu = True
                 print(f"  Using FAISS GPU for similarity search ({n} cards)")
             else:
                 # CPU fallback
@@ -1650,7 +1647,7 @@ def improve_card(card, score, reasoning, client):
 
         # Parse response: "QUESTION: ...\n---\nANSWER: ..."
         if 'QUESTION:' not in result or '---' not in result or 'ANSWER:' not in result:
-            print(f"  Warning: Invalid improvement format")
+            print("  Warning: Invalid improvement format")
             return None, None
 
         # Extract question and answer
@@ -1788,7 +1785,7 @@ async def improve_card_async(card, score, reasoning, client):
 
         return improved_question, improved_answer
 
-    except Exception as e:
+    except Exception:
         return None, None
 
 
@@ -2011,14 +2008,14 @@ def dedupe(file_path=None, threshold=0.85):
         print(f"\n{emoji} LLM Classification: {pair['classification'].upper()}")
         print(f"   Reasoning: {pair['reasoning']}")
 
-        print(f"\n[1] Card 1:")
+        print("\n[1] Card 1:")
         print(f"    Q: {card1['question'][:100]}{'...' if len(card1['question']) > 100 else ''}")
         print(f"    A: {card1['answer'][:100]}{'...' if len(card1['answer']) > 100 else ''}")
         if card1['card_id']:
             print(f"    ID: {card1['card_id']}")
         if card1.get('source_file'):
             print(f"    File: {card1['source_file'].name}")
-        print(f"\n[2] Card 2:")
+        print("\n[2] Card 2:")
         print(f"    Q: {card2['question'][:100]}{'...' if len(card2['question']) > 100 else ''}")
         print(f"    A: {card2['answer'][:100]}{'...' if len(card2['answer']) > 100 else ''}")
         if card2['card_id']:
@@ -2038,17 +2035,17 @@ def dedupe(file_path=None, threshold=0.85):
 
             if choice == '1':
                 cards_to_remove.add(j)
-                print(f"  → Will remove card 2")
+                print("  → Will remove card 2")
                 break
             elif choice == '2':
                 cards_to_remove.add(i)
-                print(f"  → Will remove card 1")
+                print("  → Will remove card 1")
                 break
             elif choice == 'b':
-                print(f"  → Keeping both cards")
+                print("  → Keeping both cards")
                 break
             elif choice == 's':
-                print(f"  → Skipped")
+                print("  → Skipped")
                 break
             elif choice == 'q':
                 print("\nAborted - no changes made")
@@ -2109,7 +2106,7 @@ def dedupe(file_path=None, threshold=0.85):
     if len(deck_files) == 1:
         print(f"\nTip: Review changes with: git diff {deck_files[0].name}")
     else:
-        print(f"\nTip: Review changes with: git diff")
+        print("\nTip: Review changes with: git diff")
 
 
 def curate(file_path=None, threshold=8):
@@ -2224,7 +2221,7 @@ def curate(file_path=None, threshold=8):
         score = card['quality_score']
         score_counts[score] = score_counts.get(score, 0) + 1
 
-    print(f"\n✓ Grading complete")
+    print("\n✓ Grading complete")
     print(f"  Cards needing improvement (< {threshold}): {len(cards_needing_improvement)}")
     print(f"  Cards meeting standards (>= {threshold}): {len(cards) - len(cards_needing_improvement)}")
 
@@ -2339,7 +2336,7 @@ def curate(file_path=None, threshold=8):
     if len(deck_files) == 1:
         print(f"\nTip: Review changes with: git diff {deck_files[0].name}")
     else:
-        print(f"\nTip: Review changes with: git diff")
+        print("\nTip: Review changes with: git diff")
 
 
 def find_deck(decks, deck_name=None, deck_id=None):
