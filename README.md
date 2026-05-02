@@ -2,8 +2,6 @@
 
 <img src="https://raw.githubusercontent.com/tsilva/mochimochi/main/logo.png" alt="mochimochi" width="512"/>
 
-# mochimochi
-
 **🍡 Local-first CLI for curating [Mochi](https://mochi.cards/) flashcard decks with AI-powered deduplication and quality grading ✨**
 
 </div>
