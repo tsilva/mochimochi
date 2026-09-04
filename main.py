@@ -53,8 +53,8 @@ GRADING_CACHE_FILE = CACHE_DIR / "gradings.json"
 
 # Models for deduplication and curation
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
-LLM_CLASSIFICATION_MODEL = "google/gemini-3.7-flash"
-CURATION_MODEL = "google/gemini-3.7-flash"
+LLM_CLASSIFICATION_MODEL = "google/gemini-3.8-flash"
+CURATION_MODEL = "google/gemini-3.8-flash"
 
 # Parallel LLM call limit
 PARALLEL_LLM_CALLS = 10
