@@ -1,10 +1,10 @@
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/tsilva/mochimochi/main/logo.png" alt="mochimochi" width="512"/>
-
-**🍡 Local-first CLI for curating [Mochi](https://mochi.cards/) flashcard decks with AI-powered deduplication and quality grading ✨**
-
-</div>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tsilva/mochimochi/main/logo.png" alt="mochimochi" width="512"/>
+  <br />
+  <!-- repo-tagline:start -->
+  <strong>🍡 Curate Mochi flashcards with AI deduplication and quality checks ✨</strong>
+  <!-- repo-tagline:end -->
+</p>
 
 mochimochi is a Python CLI for managing Mochi flashcards from local markdown files. Pull a deck from Mochi, edit it in your own folder, review changes with git, then push or sync the result back to Mochi.
 
