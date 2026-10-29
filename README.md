@@ -14,7 +14,9 @@ It also includes optional AI workflows for finding semantic duplicates and impro
 
 Dependency resolution keeps the seven-day release-age setting in `uv.toml` and
 the security constraints in `[tool.uv]` in `pyproject.toml`. Keep both files with
-the committed `uv.lock` when updating dependencies.
+the committed `uv.lock` when updating dependencies. CI audits the complete lock with
+`uv audit --frozen`; the former pip-audit development dependency is removed so
+Python 3.10 remains supported.
 
 ```bash
 uv tool install git+https://github.com/tsilva/mochimochi.git

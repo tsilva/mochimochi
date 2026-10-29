@@ -34,7 +34,7 @@ jobs:
       - name: Run Ruff
         run: uv run --locked --config-file uv.toml ruff check .
       - name: Audit dependencies
-        run: uv run --locked --config-file uv.toml pip-audit
+        run: uv --config-file uv.toml audit --frozen
 
   test:
     runs-on: ubuntu-latest
