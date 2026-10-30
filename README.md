@@ -81,7 +81,7 @@ New card answer
 - Requires Python 3.10 or newer.
 - Config is stored in `~/.mochimochi/config`.
 - `MOCHI_API_KEY` is required for all commands and is prompted on first use.
-- `OPENROUTER_API_KEY` is required for `dedupe` and `curate`.
+- `AGENTBRIDGE_API_KEY` is optional gateway authentication for `dedupe` and `curate`.
 - AI caches are stored in `~/.mochimochi/cache`.
 - New local decks can be created as `deck-<name>.md`; the first push creates the Mochi deck and renames the file to include the deck ID.
 - Run unit tests with `uv run pytest -m "not integration"`. Live API tests require `TEST_DECK_ID`.
@@ -89,6 +89,16 @@ New card answer
 ## Architecture
 
 ![mochimochi architecture diagram](./architecture.png)
+
+## AgentBridge routing
+
+All model requests use AgentBridge as their sole endpoint. Set
+`AGENTBRIDGE_BASE_URL` to its API root (default
+`http://127.0.0.1:8082/api/v1`). `AGENTBRIDGE_API_KEY` is an optional gateway
+access token; upstream OpenRouter credentials are managed only by AgentBridge.
+Existing model choices are preserved and gain the gateway's `openrouter/`
+namespace on requests. Image generation and embeddings require the gateway
+application routes; there is no direct-provider fallback.
 
 ## License
 

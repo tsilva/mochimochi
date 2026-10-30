@@ -12,9 +12,7 @@ import main
 @pytest.fixture
 def mock_env():
     """Mock environment variables."""
-    with patch.dict(os.environ, {
-        'MOCHI_API_KEY': 'test_api_key'
-    }):
+    with patch.dict(os.environ, {"MOCHI_API_KEY": "test_api_key"}):
         yield
 
 
@@ -22,9 +20,9 @@ def mock_env():
 def sample_decks():
     """Sample deck data."""
     return [
-        {'id': 'deck1', 'name': 'AI/ML Deck'},
-        {'id': 'deck2', 'name': 'Python Programming'},
-        {'id': 'deck3', 'name': 'General Knowledge'}
+        {"id": "deck1", "name": "AI/ML Deck"},
+        {"id": "deck2", "name": "Python Programming"},
+        {"id": "deck3", "name": "General Knowledge"},
     ]
 
 
@@ -32,14 +30,8 @@ def sample_decks():
 def sample_cards():
     """Sample card data."""
     return [
-        {
-            'id': 'card1',
-            'content': 'What is Python?\n---\nA programming language'
-        },
-        {
-            'id': 'card2',
-            'content': 'What is ML?\n---\nMachine Learning'
-        }
+        {"id": "card1", "content": "What is Python?\n---\nA programming language"},
+        {"id": "card2", "content": "What is ML?\n---\nMachine Learning"},
     ]
 
 
@@ -74,29 +66,29 @@ class TestFindDeck:
     """Test deck finding logic."""
 
     def test_find_deck_by_id(self, sample_decks):
-        deck = main.find_deck(sample_decks, deck_id='deck2')
-        assert deck['id'] == 'deck2'
-        assert deck['name'] == 'Python Programming'
+        deck = main.find_deck(sample_decks, deck_id="deck2")
+        assert deck["id"] == "deck2"
+        assert deck["name"] == "Python Programming"
 
     def test_find_deck_by_exact_name(self, sample_decks):
-        deck = main.find_deck(sample_decks, deck_name='Python Programming')
-        assert deck['id'] == 'deck2'
+        deck = main.find_deck(sample_decks, deck_name="Python Programming")
+        assert deck["id"] == "deck2"
 
     def test_find_deck_by_partial_name(self, sample_decks):
-        deck = main.find_deck(sample_decks, deck_name='python')
-        assert deck['id'] == 'deck2'
+        deck = main.find_deck(sample_decks, deck_name="python")
+        assert deck["id"] == "deck2"
 
     def test_find_deck_default_aiml(self, sample_decks):
         deck = main.find_deck(sample_decks)
-        assert deck['id'] == 'deck1'
-        assert 'AI/ML' in deck['name']
+        assert deck["id"] == "deck1"
+        assert "AI/ML" in deck["name"]
 
     def test_find_deck_not_found(self, sample_decks):
-        deck = main.find_deck(sample_decks, deck_name='Nonexistent')
+        deck = main.find_deck(sample_decks, deck_name="Nonexistent")
         assert deck is None
 
     def test_find_deck_id_not_found(self, sample_decks):
-        deck = main.find_deck(sample_decks, deck_id='invalid')
+        deck = main.find_deck(sample_decks, deck_id="invalid")
         assert deck is None
 
 
@@ -106,7 +98,7 @@ class TestCRUDOperations:
     @pytest.fixture
     def test_deck_id(self):
         """Get a test deck ID from environment or skip test."""
-        deck_id = os.getenv('TEST_DECK_ID')
+        deck_id = os.getenv("TEST_DECK_ID")
         if not deck_id:
             pytest.skip("TEST_DECK_ID not set - skipping live API tests")
         return deck_id
@@ -117,14 +109,14 @@ class TestCRUDOperations:
         # Create
         test_content = "Test question?\n---\nTest answer"
         card = main.create_card(test_deck_id, test_content)
-        assert 'id' in card
-        card_id = card['id']
+        assert "id" in card
+        card_id = card["id"]
 
         try:
             # Update
             updated_content = "Updated question?\n---\nUpdated answer"
             updated_card = main.update_card(card_id, content=updated_content)
-            assert updated_card['id'] == card_id
+            assert updated_card["id"] == card_id
 
             # Delete
             result = main.delete_card(card_id)
@@ -143,8 +135,8 @@ class TestCRUDOperations:
         decks = main.get_decks()
         assert isinstance(decks, list)
         assert len(decks) > 0
-        assert 'id' in decks[0]
-        assert 'name' in decks[0]
+        assert "id" in decks[0]
+        assert "name" in decks[0]
 
     @pytest.mark.integration
     def test_get_cards(self, test_deck_id):
@@ -158,17 +150,17 @@ class TestCLI:
 
     def test_parse_args_pull(self):
         """Test pull command parsing."""
-        with patch('sys.argv', ['main.py', 'pull', 'abc123']):
+        with patch("sys.argv", ["main.py", "pull", "abc123"]):
             args = main.parse_args()
-            assert args.command == 'pull'
-            assert args.deck_id == 'abc123'
+            assert args.command == "pull"
+            assert args.deck_id == "abc123"
 
     def test_parse_args_push_with_force(self):
         """Test push command with force flag."""
-        with patch('sys.argv', ['main.py', 'push', 'deck-test-abc123.md', '--force']):
+        with patch("sys.argv", ["main.py", "push", "deck-test-abc123.md", "--force"]):
             args = main.parse_args()
-            assert args.command == 'push'
-            assert args.file_path == 'deck-test-abc123.md'
+            assert args.command == "push"
+            assert args.file_path == "deck-test-abc123.md"
             assert args.force is True
 
 
@@ -213,50 +205,50 @@ Machine Learning
         assert len(cards) == 2
 
         # First card with ID
-        assert cards[0]['card_id'] == 'abc123'
-        assert cards[0]['question'] == 'What is Python?'
-        assert cards[0]['answer'] == 'A programming language'
-        assert cards[0]['tags'] == ['python', 'basics']
-        assert cards[0]['archived'] is False
+        assert cards[0]["card_id"] == "abc123"
+        assert cards[0]["question"] == "What is Python?"
+        assert cards[0]["answer"] == "A programming language"
+        assert cards[0]["tags"] == ["python", "basics"]
+        assert cards[0]["archived"] is False
 
         # Second card without ID
-        assert cards[1]['card_id'] is None
-        assert cards[1]['question'] == 'What is ML?'
-        assert cards[1]['answer'] == 'Machine Learning'
+        assert cards[1]["card_id"] is None
+        assert cards[1]["question"] == "What is ML?"
+        assert cards[1]["answer"] == "Machine Learning"
 
     def test_format_card_to_markdown(self):
         """Test formatting card dict to markdown."""
         card = {
-            'card_id': 'abc123',
-            'question': 'What is Python?',
-            'answer': 'A programming language',
-            'tags': ['python', 'basics'],
-            'archived': False
+            "card_id": "abc123",
+            "question": "What is Python?",
+            "answer": "A programming language",
+            "tags": ["python", "basics"],
+            "archived": False,
         }
 
         markdown = main.format_card_to_markdown(card)
 
-        assert 'card_id: abc123' in markdown
+        assert "card_id: abc123" in markdown
         assert 'tags: ["python", "basics"]' in markdown
-        assert 'What is Python?' in markdown
-        assert 'A programming language' in markdown
-        assert 'archived' not in markdown  # Should not include if False
+        assert "What is Python?" in markdown
+        assert "A programming language" in markdown
+        assert "archived" not in markdown  # Should not include if False
 
     def test_format_card_to_markdown_archived(self):
         """Test formatting archived card."""
         card = {
-            'card_id': 'xyz789',
-            'question': 'Old question',
-            'answer': 'Old answer',
-            'tags': [],
-            'archived': True
+            "card_id": "xyz789",
+            "question": "Old question",
+            "answer": "Old answer",
+            "tags": [],
+            "archived": True,
         }
 
         markdown = main.format_card_to_markdown(card)
 
-        assert 'card_id: xyz789' in markdown
-        assert 'archived: true' in markdown
-        assert 'Old question' in markdown
+        assert "card_id: xyz789" in markdown
+        assert "archived: true" in markdown
+        assert "Old question" in markdown
 
 
 class TestValidation:
@@ -282,9 +274,9 @@ Machine Learning
 
         cards, deck_id = main.validate_deck_file(deck_file)
         assert len(cards) == 2
-        assert cards[0]['question'] == 'What is Python?'
-        assert cards[1]['question'] == 'What is ML?'
-        assert deck_id == 'Abc12345'
+        assert cards[0]["question"] == "What is Python?"
+        assert cards[1]["question"] == "What is ML?"
+        assert deck_id == "Abc12345"
 
     def test_validate_deck_file_not_found(self, tmp_path):
         """Test validation fails for non-existent file."""
@@ -400,9 +392,9 @@ Answer 3
 
         cards, deck_id = main.validate_deck_file(deck_file)
         assert len(cards) == 3
-        assert all('question' in card for card in cards)
-        assert all('answer' in card for card in cards)
-        assert deck_id == 'Abc12345'
+        assert all("question" in card for card in cards)
+        assert all("answer" in card for card in cards)
+        assert deck_id == "Abc12345"
 
     def test_validate_deck_file_new_deck(self, tmp_path):
         """Test validating a new deck file (without deck ID)."""
@@ -424,8 +416,8 @@ Machine Learning
 
         cards, deck_id = main.validate_deck_file(deck_file)
         assert len(cards) == 2
-        assert cards[0]['question'] == 'What is Python?'
-        assert cards[1]['question'] == 'What is ML?'
+        assert cards[0]["question"] == "What is Python?"
+        assert cards[1]["question"] == "What is ML?"
         assert deck_id is None  # New deck has no ID yet
 
 
@@ -437,7 +429,7 @@ class TestExtractDeckId:
         deck_file = tmp_path / "deck-mytest-Abc12345.md"
         deck_file.touch()
         deck_id = main.extract_deck_id_from_filename(deck_file)
-        assert deck_id == 'Abc12345'
+        assert deck_id == "Abc12345"
 
     def test_extract_deck_id_new_deck(self, tmp_path):
         """Test extracting deck ID from new deck filename (no ID)."""
@@ -451,7 +443,7 @@ class TestExtractDeckId:
         deck_file = tmp_path / "deck-my-cool-deck-Xyz78901.md"
         deck_file.touch()
         deck_id = main.extract_deck_id_from_filename(deck_file)
-        assert deck_id == 'Xyz78901'
+        assert deck_id == "Xyz78901"
 
     def test_extract_deck_id_invalid_no_prefix(self, tmp_path):
         """Test error for filename without deck- prefix."""
@@ -561,28 +553,29 @@ Answer 3
 """)
 
         # Mock API_KEY
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         # Mock get_cards to return only card1 and card3 (card2 deleted remotely)
         mock_remote_cards = [
-            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False},
-            {'id': 'card3', 'content': 'Question 3\n---\nAnswer 3', 'tags': [], 'archived': False}
+            {"id": "card1", "content": "Question 1\n---\nAnswer 1", "tags": [], "archived": False},
+            {"id": "card3", "content": "Question 3\n---\nAnswer 3", "tags": [], "archived": False},
         ]
 
         # Mock user input to proceed with sync
-        with patch('main.get_cards', return_value=mock_remote_cards), \
-             patch('builtins.input', return_value='y'):
-
+        with (
+            patch("main.get_cards", return_value=mock_remote_cards),
+            patch("builtins.input", return_value="y"),
+        ):
             main.sync(str(deck_file))
 
         # Read the updated file
         updated_content = deck_file.read_text()
 
         # Verify card2 was removed locally
-        assert 'card1' in updated_content
-        assert 'card2' not in updated_content
-        assert 'card3' in updated_content
-        assert 'Question 2' not in updated_content
+        assert "card1" in updated_content
+        assert "card2" not in updated_content
+        assert "card3" in updated_content
+        assert "Question 2" not in updated_content
 
     def test_sync_creates_new_cards_remotely(self, tmp_path, monkeypatch):
         """Test that sync creates new cards without IDs remotely."""
@@ -595,22 +588,23 @@ New Question
 New Answer
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         mock_remote_cards = []
-        mock_created_card = {'id': 'new_card_id', 'content': 'New Question\n---\nNew Answer'}
+        mock_created_card = {"id": "new_card_id", "content": "New Question\n---\nNew Answer"}
 
-        with patch('main.get_cards', return_value=mock_remote_cards), \
-             patch('main.create_card', return_value=mock_created_card), \
-             patch('builtins.input', return_value='y'):
-
+        with (
+            patch("main.get_cards", return_value=mock_remote_cards),
+            patch("main.create_card", return_value=mock_created_card),
+            patch("builtins.input", return_value="y"),
+        ):
             main.sync(str(deck_file))
 
         # Read updated file
         updated_content = deck_file.read_text()
 
         # Verify card was assigned an ID
-        assert 'card_id: new_card_id' in updated_content
+        assert "card_id: new_card_id" in updated_content
 
     def test_sync_updates_existing_cards(self, tmp_path, monkeypatch):
         """Test that sync updates cards with changed content."""
@@ -623,10 +617,15 @@ Updated Question
 Updated Answer
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         mock_remote_cards = [
-            {'id': 'card1', 'content': 'Old Question\n---\nOld Answer', 'tags': [], 'archived': False}
+            {
+                "id": "card1",
+                "content": "Old Question\n---\nOld Answer",
+                "tags": [],
+                "archived": False,
+            }
         ]
 
         updated = False
@@ -634,14 +633,15 @@ Updated Answer
         def mock_update_card(card_id, **kwargs):
             nonlocal updated
             updated = True
-            assert card_id == 'card1'
-            assert 'Updated Question' in kwargs['content']
-            assert 'Updated Answer' in kwargs['content']
+            assert card_id == "card1"
+            assert "Updated Question" in kwargs["content"]
+            assert "Updated Answer" in kwargs["content"]
 
-        with patch('main.get_cards', return_value=mock_remote_cards), \
-             patch('main.update_card', side_effect=mock_update_card), \
-             patch('builtins.input', return_value='y'):
-
+        with (
+            patch("main.get_cards", return_value=mock_remote_cards),
+            patch("main.update_card", side_effect=mock_update_card),
+            patch("builtins.input", return_value="y"),
+        ):
             main.sync(str(deck_file))
 
         assert updated, "update_card should have been called"
@@ -657,12 +657,12 @@ Question 1
 Answer 1
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         # Remote has card1 and card2, but local only has card1
         mock_remote_cards = [
-            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False},
-            {'id': 'card2', 'content': 'Question 2\n---\nAnswer 2', 'tags': [], 'archived': False}
+            {"id": "card1", "content": "Question 1\n---\nAnswer 1", "tags": [], "archived": False},
+            {"id": "card2", "content": "Question 2\n---\nAnswer 2", "tags": [], "archived": False},
         ]
 
         deleted = False
@@ -670,12 +670,13 @@ Answer 1
         def mock_delete_card(card_id):
             nonlocal deleted
             deleted = True
-            assert card_id == 'card2'
+            assert card_id == "card2"
 
-        with patch('main.get_cards', return_value=mock_remote_cards), \
-             patch('main.delete_card', side_effect=mock_delete_card), \
-             patch('builtins.input', return_value='y'):
-
+        with (
+            patch("main.get_cards", return_value=mock_remote_cards),
+            patch("main.delete_card", side_effect=mock_delete_card),
+            patch("builtins.input", return_value="y"),
+        ):
             main.sync(str(deck_file))
 
         assert deleted, "delete_card should have been called for card2"
@@ -691,17 +692,18 @@ Question 1
 Answer 1
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         mock_remote_cards = []
 
-        with patch('main.get_cards', return_value=mock_remote_cards), \
-             patch('builtins.input', return_value='n'):
-
+        with (
+            patch("main.get_cards", return_value=mock_remote_cards),
+            patch("builtins.input", return_value="n"),
+        ):
             main.sync(str(deck_file))
 
         captured = capsys.readouterr()
-        assert 'Aborted' in captured.out
+        assert "Aborted" in captured.out
 
     def test_sync_fails_for_new_deck_without_id(self, tmp_path, monkeypatch, capsys):
         """Test that sync fails for new deck files without deck ID."""
@@ -714,13 +716,13 @@ Question
 Answer
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         main.sync(str(deck_file))
 
         captured = capsys.readouterr()
-        assert 'Cannot sync new deck file' in captured.out
-        assert 'Use \'push\' command' in captured.out
+        assert "Cannot sync new deck file" in captured.out
+        assert "Use 'push' command" in captured.out
 
     def test_sync_everything_in_sync(self, tmp_path, monkeypatch, capsys):
         """Test sync when everything is already in sync."""
@@ -733,17 +735,17 @@ Question 1
 Answer 1
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         mock_remote_cards = [
-            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False}
+            {"id": "card1", "content": "Question 1\n---\nAnswer 1", "tags": [], "archived": False}
         ]
 
-        with patch('main.get_cards', return_value=mock_remote_cards):
+        with patch("main.get_cards", return_value=mock_remote_cards):
             main.sync(str(deck_file))
 
         captured = capsys.readouterr()
-        assert 'Everything in sync' in captured.out
+        assert "Everything in sync" in captured.out
 
 
 class TestPushWithMissingRemoteCards:
@@ -766,18 +768,18 @@ Question 2
 Answer 2
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         # Remote only has card1 (card2 is missing)
         mock_remote_cards = [
-            {'id': 'card1', 'content': 'Question 1\n---\nAnswer 1', 'tags': [], 'archived': False}
+            {"id": "card1", "content": "Question 1\n---\nAnswer 1", "tags": [], "archived": False}
         ]
 
-        with patch('main.get_cards', return_value=mock_remote_cards):
+        with patch("main.get_cards", return_value=mock_remote_cards):
             with pytest.raises(AssertionError) as exc_info:
                 main.push(str(deck_file))
 
-            assert 'local cards not found remotely' in str(exc_info.value)
+            assert "local cards not found remotely" in str(exc_info.value)
 
     def test_push_error_message_suggests_sync(self, tmp_path, monkeypatch, capsys):
         """Test that push error message suggests using sync command."""
@@ -790,18 +792,46 @@ Question
 Answer
 """)
 
-        monkeypatch.setattr(main, 'API_KEY', 'test_key')
+        monkeypatch.setattr(main, "API_KEY", "test_key")
 
         mock_remote_cards = []
 
-        with patch('main.get_cards', return_value=mock_remote_cards):
+        with patch("main.get_cards", return_value=mock_remote_cards):
             with pytest.raises(AssertionError):
                 main.push(str(deck_file))
 
         captured = capsys.readouterr()
-        assert 'Data inconsistency detected' in captured.out
-        assert 'use \'sync\' command' in captured.out
+        assert "Data inconsistency detected" in captured.out
+        assert "use 'sync' command" in captured.out
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
+
+class TestGatewayRouting:
+    def test_gateway_token_is_optional_and_upstream_key_is_ignored(self, monkeypatch):
+        monkeypatch.delenv("AGENTBRIDGE_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "upstream-only")
+        assert main.get_agentbridge_api_key() == "not-needed"
+        monkeypatch.setenv("AGENTBRIDGE_API_KEY", "gateway-token")
+        assert main.get_agentbridge_api_key() == "gateway-token"
+
+    def test_embeddings_keep_existing_model_through_gateway(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        client = Mock()
+        client.embeddings.create.return_value = SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.5, 0.2])]
+        )
+        assert main.get_embeddings_batch(["synthetic card"], client) == [[0.5, 0.2]]
+        assert (
+            client.embeddings.create.call_args.kwargs["model"]
+            == "openrouter/" + main.EMBEDDING_MODEL
+        )
+
+    def test_upstream_endpoint_override_is_rejected(self, monkeypatch):
+        monkeypatch.setenv("AGENTBRIDGE_BASE_URL", "https://openrouter.ai/api/v1")
+        with pytest.raises(ValueError, match="AgentBridge"):
+            main.agentbridge_base_url()
