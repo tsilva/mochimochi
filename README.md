@@ -1,3 +1,10 @@
+<!-- archive-repo:deprecation-notice:start -->
+> [!WARNING]
+> **Deprecated**
+>
+> This project has been retired in favor of my own tools, particularly [Waxon](https://waxon.tsilva.eu).
+<!-- archive-repo:deprecation-notice:end -->
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/tsilva/mochimochi/main/logo.png" alt="mochimochi" width="512"/>
   <br />
